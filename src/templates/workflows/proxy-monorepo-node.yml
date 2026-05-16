@@ -96,7 +96,7 @@ jobs:
           sleep 10
           for i in 1 2 3 4 5; do
             STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:{{APP_PORT}}/{{HEALTH_PATH}} || true)
-            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 500 ]; then
+            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
               echo "Health check passed (HTTP $STATUS)"
               exit 0
             fi

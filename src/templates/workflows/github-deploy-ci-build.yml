@@ -38,7 +38,7 @@ jobs:
           sleep 8
           for i in 1 2 3 4 5; do
             STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:{{APP_PORT}}/ || true)
-            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 500 ]; then
+            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
               echo "Smoke test passed (HTTP $STATUS)"
               docker stop smoke-test && docker rm smoke-test
               exit 0
@@ -121,7 +121,7 @@ jobs:
             sleep 10
             for i in 1 2 3 4 5; do
               STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:{{APP_PORT}}/ || true)
-              if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 500 ]; then
+              if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
                 echo "Health check passed (HTTP $STATUS)"
                 exit 0
               fi
@@ -129,6 +129,7 @@ jobs:
               sleep 5
             done
             echo "Health check failed after 5 attempts"
+            docker compose ps || true
             docker logs {{APP_NAME}} --tail 30
 
             # Auto-cleanup on failure

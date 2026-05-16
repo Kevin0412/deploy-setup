@@ -220,6 +220,7 @@ function buildTemplateVars(config: CollectedConfig, skipDockerFiles: boolean = f
     DEPLOYMENT_MODE: config.deploymentMode || 'generated',
     PROXY_MODE: config.proxyMode || 'host-nginx',
     SKIP_BUILD: skipDockerFiles ? 'true' : '',
+    NOT_SKIP_BUILD: skipDockerFiles ? '' : 'true',
 
     // Strategy-related vars
     BUILD_ON_CI: config.strategy?.buildLocation === 'ci' ? 'true' : '',

@@ -11,6 +11,7 @@
     "postbuild": "node -e \"const fs=require('fs');const p=require('path');function c(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=p.join(s,f),dp=p.join(d,f);fs.statSync(sp).isDirectory()?c(sp,dp):fs.copyFileSync(sp,dp)}}c('src/templates','dist/templates')\"",
     "test": "vitest run",
     "test:watch": "vitest",
+    "verify": "npm run build && npm test && node dist/cli.js --version && node dist/cli.js detect --json -d .",
     "dev": "tsc --watch",
     "start": "node dist/cli.js"
   },

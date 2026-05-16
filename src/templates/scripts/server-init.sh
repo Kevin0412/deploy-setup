@@ -35,10 +35,72 @@ ok() {
     echo -e "${GREEN}  ✔ $1${NC}"
 }
 
+warn() {
+    echo -e "${RED}  ⚠ $1${NC}"
+}
+
+run_apt_security_updates() {
+    if ! command -v apt-get &> /dev/null; then
+        echo "  非 apt 系统，跳过自动安全升级"
+        return
+    fi
+
+    export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=a
+    APT_OPTS="-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+
+    apt-get update
+    apt-get install ${APT_OPTS} unattended-upgrades kmod
+    apt-get upgrade ${APT_OPTS}
+
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'APTCONF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APTCONF
+
+    if command -v nginx &> /dev/null; then
+        nginx -v 2>&1 | sed 's/^/  /'
+        systemctl try-restart nginx 2>/dev/null || true
+    fi
+}
+
+apply_kernel_lpe_mitigations() {
+    if [ ! -d /etc/modprobe.d ] || [ ! -r /proc/modules ]; then
+        echo "  当前系统不支持 modprobe 缓解检查，跳过"
+        return
+    fi
+
+    cat > /etc/modprobe.d/deploy-setup-local-lpe.conf <<'MODPROBE'
+# deploy-setup automatic mitigation for recent Linux kernel local privilege escalation classes.
+# Copy Fail / CVE-2026-31431: block algif_aead.
+# Dirty Frag / Fragnesia: block esp4, esp6, and rxrpc.
+install algif_aead /bin/false
+install esp4 /bin/false
+install esp6 /bin/false
+install rxrpc /bin/false
+MODPROBE
+
+    update-initramfs -u -k all 2>/dev/null || true
+    rmmod algif_aead esp4 esp6 rxrpc 2>/dev/null || true
+
+    if grep -qE '^(algif_aead|esp4|esp6|rxrpc) ' /proc/modules; then
+        warn "部分 LPE 缓解模块仍在使用中，需重启服务器后完全生效"
+        grep -E '^(algif_aead|esp4|esp6|rxrpc) ' /proc/modules || true
+    else
+        ok "Linux 本地提权缓解已生效"
+    fi
+}
+
 # ─── 开始 ───
 echo -e "${CYAN}=== 服务器初始化: ${APP_NAME} ===${NC}"
 echo "  目录: ${APP_DIR} | 端口: ${APP_PORT}"
 [ "${DOMAIN_ENABLED}" = "true" ] && echo "  域名: ${DOMAIN_NAME} | HTTPS: ${HTTPS_ENABLED}"
+
+# ─── Step 0: Security ───
+step "0/7 应用安全补丁与本地提权缓解"
+run_apt_security_updates
+apply_kernel_lpe_mitigations
+ok "安全基线检查完成"
 
 # ─── Step 1: Docker ───
 step "1/7 检查 Docker"

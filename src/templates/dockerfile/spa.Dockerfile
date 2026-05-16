@@ -18,7 +18,7 @@ RUN npm ci --legacy-peer-deps && npm cache clean --force
 COPY . .
 RUN {{BUILD_CMD}}
 
-FROM nginx:alpine AS production
+FROM nginx:1.30.1-alpine AS production
 
 {{#IF MIRROR_ALPINE}}
 RUN sed -i 's/dl-cdn.alpinelinux.org/{{MIRROR_ALPINE}}/g' /etc/apk/repositories

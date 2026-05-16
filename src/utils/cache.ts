@@ -17,5 +17,7 @@ export function loadCache(dir: string): CollectedConfig {
 }
 
 export function saveDeployConfig(dir: string, config: CollectedConfig): void {
-  fs.writeFileSync(path.join(dir, 'deploy-config.json'), JSON.stringify(config, null, 2), 'utf-8');
+  const deployDir = path.join(dir, '.deploy');
+  fs.mkdirSync(deployDir, { recursive: true });
+  fs.writeFileSync(path.join(deployDir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8');
 }

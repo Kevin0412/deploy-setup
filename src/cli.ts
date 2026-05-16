@@ -18,12 +18,13 @@ import { redeployProject } from './core/redeployer';
 import { deriveProxyRepoConfig } from './core/strategy';
 import { redirectConsoleToStderr, emitJsonSuccess, emitJsonError } from './utils/json-output';
 
+const packageJson = require('../package.json');
 const program = new Command();
 
 program
   .name('deploy-setup')
   .description('通用 CI/CD 配置生成工具 - git push 即部署到 Linux VPS')
-  .version('1.0.0');
+  .version(packageJson.version);
 
 // ─── all (一键部署) ───
 program
@@ -304,6 +305,7 @@ async function runInit(projectDir: string, configFile?: string, initOptions?: In
 
   saveProjectRecord(config.project.name, config.project.type);
   saveCache(projectDir, config);
+  saveDeployConfig(projectDir, config);
 
   return config;
 }
@@ -762,7 +764,7 @@ async function runSyncEnv(projectDir: string, options: { dryRun?: boolean; yes?:
     console.log(chalk.yellow('  未找到 deploy.yml，跳过 workflow 更新'));
   }
 
-  // 7. Save cache + deploy-config.json
+  // 7. Save cache + reusable .deploy/config.json
   saveCache(projectDir, config);
   saveDeployConfig(projectDir, config);
   console.log(chalk.green('  配置已保存'));

@@ -52,6 +52,8 @@ describe('Proxy workflow template rendering', () => {
     expect(rendered).toContain('/opt/apps/vibecraft')
     expect(rendered).toContain('docker compose')
     expect(rendered).toContain('Health check')
+    expect(rendered).toContain('[ "$STATUS" -lt 400 ]')
+    expect(rendered).not.toContain('[ "$STATUS" -lt 500 ]')
   })
 
   it('renders proxy-tauri-desktop.yml with release steps', () => {
