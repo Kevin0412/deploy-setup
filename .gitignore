@@ -4,4 +4,5 @@ dist/
 *.d.ts
 !bin/deploy-setup.js
 .deploy-setup-cache.json
+.deploy/config.json
 test-config.json
