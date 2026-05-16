@@ -50,6 +50,93 @@ write_root_file() {
     fi
 }
 
+disable_apt_source_file_url() {
+    local source_file="$1"
+    local source_url="$2"
+    local stamp="$3"
+    local tmp_file
+
+    if [ "${source_file##*.}" = "sources" ]; then
+        as_root mv "$source_file" "${source_file}.disabled-by-deploy-setup-${stamp}"
+        warn "已禁用失效 apt 源文件: ${source_file}"
+        return
+    fi
+
+    tmp_file="$(mktemp)"
+    awk -v url="$source_url" '
+        index($0, url) && $0 !~ /^[[:space:]]*#/ {
+            print "# disabled by deploy-setup due to apt update failure: " $0
+            next
+        }
+        { print }
+    ' "$source_file" > "$tmp_file"
+
+    as_root cp "$source_file" "${source_file}.deploy-setup-backup-${stamp}" 2>/dev/null || true
+    write_root_file "$source_file" < "$tmp_file"
+    rm -f "$tmp_file"
+    warn "已注释失效 apt 源: ${source_file} (${source_url})"
+}
+
+disable_broken_apt_sources() {
+    local log_file="$1"
+    local urls_file
+    local source_url
+    local source_file
+    local disabled=0
+    local stamp
+
+    urls_file="$(mktemp)"
+    stamp="$(date +%Y%m%d%H%M%S)"
+
+    awk '
+        /Release/ && /(file|文件)/ {
+            line=$0
+            while (match(line, /https?:\/\/[^ "”“'\''’‘]+/)) {
+                print substr(line, RSTART, RLENGTH)
+                line=substr(line, RSTART + RLENGTH)
+            }
+        }
+    ' "$log_file" | sort -u > "$urls_file"
+
+    while IFS= read -r source_url; do
+        [ -n "$source_url" ] || continue
+        warn "发现失效 apt 源: ${source_url}"
+
+        for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source_file" ] || continue
+            if grep -qF "$source_url" "$source_file" 2>/dev/null; then
+                disable_apt_source_file_url "$source_file" "$source_url" "$stamp"
+                disabled=$((disabled + 1))
+            fi
+        done
+    done < "$urls_file"
+
+    rm -f "$urls_file"
+
+    if [ "$disabled" -eq 0 ]; then
+        warn "未能自动定位失效 apt 源文件"
+        return 1
+    fi
+
+    ok "已禁用 ${disabled} 个失效 apt 源，准备重试 apt-get update"
+}
+
+apt_update_with_repair() {
+    local log_file
+    log_file="$(mktemp)"
+
+    if as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update 2>&1 | tee "$log_file"; then
+        rm -f "$log_file"
+        return
+    fi
+
+    warn "apt-get update 失败，尝试禁用失效第三方源后重试"
+    disable_broken_apt_sources "$log_file"
+    rm -f "$log_file"
+
+    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+}
+
 run_apt_security_updates() {
     if ! command -v apt-get &> /dev/null; then
         echo "  非 apt 系统，跳过自动安全升级"
@@ -58,7 +145,7 @@ run_apt_security_updates() {
 
     APT_OPTS="-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
-    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+    apt_update_with_repair
     as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install ${APT_OPTS} unattended-upgrades kmod
     as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get upgrade ${APT_OPTS}
 

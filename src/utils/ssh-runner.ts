@@ -38,14 +38,23 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function buildIdentityArg(sshKeyPath?: string): string {
+  const resolvedKeyPath = resolveSshKeyPath(sshKeyPath);
+  if (!fs.existsSync(resolvedKeyPath)) {
+    throw new Error(
+      `SSH 私钥文件不存在: ${resolvedKeyPath}。请在 init 中选择存在的私钥，或先把密钥加入该路径；为避免明码密码提示，deploy-setup 不回退到 SSH 密码登录。`,
+    );
+  }
+  return `-i ${shellQuote(resolvedKeyPath)}`;
+}
+
 export function buildSshCommand(
   connection: SshConnection,
   remoteCommand: string,
   options: { connectTimeout?: number; tty?: boolean } = {},
 ): string {
   const connectTimeout = options.connectTimeout ?? 30;
-  const resolvedKeyPath = resolveSshKeyPath(connection.sshKeyPath);
-  const keyArg = fs.existsSync(resolvedKeyPath) ? ` -i ${shellQuote(resolvedKeyPath)}` : '';
+  const keyArg = buildIdentityArg(connection.sshKeyPath);
   const ttyArg = options.tty ? ' -tt' : '';
   const port = normalizeSshPort(connection.sshPort);
   const target = `${connection.user}@${connection.host}`;
@@ -53,9 +62,10 @@ export function buildSshCommand(
   return [
     'ssh',
     '-o StrictHostKeyChecking=no',
+    '-o BatchMode=yes',
     `-o ConnectTimeout=${connectTimeout}`,
     `-p ${port}`,
-    keyArg.trim(),
+    keyArg,
     ttyArg.trim(),
     shellQuote(target),
     shellQuote(remoteCommand),
@@ -69,17 +79,17 @@ export function buildScpCommand(
   options: { connectTimeout?: number } = {},
 ): string {
   const connectTimeout = options.connectTimeout ?? 30;
-  const resolvedKeyPath = resolveSshKeyPath(connection.sshKeyPath);
-  const keyArg = fs.existsSync(resolvedKeyPath) ? ` -i ${shellQuote(resolvedKeyPath)}` : '';
+  const keyArg = buildIdentityArg(connection.sshKeyPath);
   const port = normalizeSshPort(connection.sshPort);
   const target = `${connection.user}@${connection.host}:${remotePath}`;
 
   return [
     'scp',
     '-o StrictHostKeyChecking=no',
+    '-o BatchMode=yes',
     `-o ConnectTimeout=${connectTimeout}`,
     `-P ${port}`,
-    keyArg.trim(),
+    keyArg,
     shellQuote(sourcePath),
     shellQuote(target),
   ].filter(Boolean).join(' ');

@@ -205,6 +205,8 @@ node dist/cli.js patch-server -d . --dry-run
 
 如果 SSH 用户不是 `root`，`init` 可以选择 `sudoMode: "tty"`。此模式会用 `ssh -tt` 打开远程终端，`sudo` 密码只通过 SSH 加密通道输入到远程服务器，不写入 `.deploy/config.json`、缓存文件或 GitHub Secrets。CI/CD 的非交互部署仍建议使用 root、免密 sudo，或让部署用户加入 docker 组。
 
+为避免 SSH 登录密码在部分终端中回显，CLI 不会回退到 SSH 密码登录；私钥文件不存在时会直接报错。请使用存在的 SSH 私钥，或先把私钥放到对应路径。
+
 补丁脚本会执行：
 
 - 对 Debian/Ubuntu 服务器执行 `apt-get update`、安装 `unattended-upgrades`、执行非交互式 `apt-get upgrade`。

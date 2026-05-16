@@ -245,7 +245,14 @@ program
   });
 
 // ─── parse ───
-program.parse(process.argv);
+program.parseAsync(process.argv).catch((err: any) => {
+  const message = err?.message ? String(err.message).split('\n')[0] : String(err);
+  console.error(chalk.red(`\n✗ ${message}`));
+  if (err?.status !== undefined) {
+    console.error(chalk.red(`  退出码: ${err.status}`));
+  }
+  process.exit(1);
+});
 
 // ─── core functions ───
 

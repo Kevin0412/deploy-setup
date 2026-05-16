@@ -88,10 +88,14 @@ describe('server patching', () => {
   })
 
   it('runs patch script over ssh using stdin', () => {
-    patchServer({ config: baseConfig(), projectDir: tmpDir })
+    const config = baseConfig()
+    config.server.sshKeyPath = path.join(tmpDir, 'id_ed25519')
+    fs.writeFileSync(config.server.sshKeyPath, 'fake-key')
+
+    patchServer({ config, projectDir: tmpDir })
 
     expect(childProcess.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -p 22'),
+      expect.stringContaining('ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=30 -p 22'),
       expect.objectContaining({
         cwd: tmpDir,
         input: expect.stringContaining('PATCH_TARGET="demo-app"'),
@@ -107,7 +111,8 @@ describe('server patching', () => {
   it('uses an SSH TTY for sudo-capable patching without storing a password', () => {
     const config = baseConfig()
     config.server.user = 'deploy'
-    config.server.sshKeyPath = path.join(tmpDir, 'missing-key')
+    config.server.sshKeyPath = path.join(tmpDir, 'id_ed25519')
+    fs.writeFileSync(config.server.sshKeyPath, 'fake-key')
     config.server.sshPort = 2202
     config.server.sudoMode = 'tty'
 
@@ -116,10 +121,19 @@ describe('server patching', () => {
     const calls = vi.mocked(childProcess.execSync).mock.calls
     expect(calls[0][0]).toEqual(expect.stringContaining('scp '))
     expect(calls[0][0]).toEqual(expect.stringContaining('-P 2202'))
-    expect(calls[1][0]).toEqual(expect.stringContaining('ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -p 2202 -tt'))
+    expect(calls[1][0]).toEqual(expect.stringContaining('ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=30 -p 2202'))
+    expect(calls[1][0]).toEqual(expect.stringContaining('-tt'))
     expect(calls[1][0]).toEqual(expect.stringContaining("'deploy@203.0.113.10'"))
     expect(calls[1][1]).toEqual(expect.objectContaining({ stdio: 'inherit' }))
     expect(JSON.stringify(config.server)).not.toMatch(/password/i)
+  })
+
+  it('fails instead of falling back to SSH password auth when key is missing', () => {
+    const config = baseConfig()
+    config.server.sshKeyPath = path.join(tmpDir, 'missing-key')
+
+    expect(() => patchServer({ config, projectDir: tmpDir })).toThrow('SSH 私钥文件不存在')
+    expect(childProcess.execSync).not.toHaveBeenCalled()
   })
 
   it('loads .deploy/config.json before falling back to the cache', () => {
