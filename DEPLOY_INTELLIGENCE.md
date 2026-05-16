@@ -77,7 +77,7 @@ USER_NAME=root
 **AI 自动提取**：
 - 服务器 IP
 - SSH 用户名
-- SSH 密钥路径（默认 ~/.ssh/id_rsa）
+- SSH 密钥路径（当前 CLI 默认优先使用 `~/.ssh/id_ed25519`，也会列出 `id_rsa`、`id_ecdsa`、硬件安全密钥等常见路径）
 
 ### 3. 配置优先级
 
@@ -126,19 +126,26 @@ AI:
 
 ### .deploy/config.json
 
+`.deploy/config.json` 是本机可复用配置，当前仓库默认将其加入 `.gitignore`。如果需要给 AI 或团队复用，建议提供脱敏后的示例配置。
+
 ```json
 {
   "project": {
     "name": "futures-monitor",
     "type": "fastapi",
+    "language": "python",
     "port": 8000,
     "startCmd": "uvicorn main:app --host 0.0.0.0 --port 8000",
-    "buildCmd": ""
+    "buildCmd": "",
+    "projectStructure": "standard",
+    "subDirs": {}
   },
   "server": {
     "host": "47.98.171.82",
     "user": "root",
-    "sshKeyPath": "~/.ssh/id_rsa",
+    "sshKeyPath": "~/.ssh/id_ed25519",
+    "sshPort": 22,
+    "sudoMode": "none",
     "deployDir": "/opt/apps"
   },
   "domain": {
@@ -147,8 +154,19 @@ AI:
     "https": true
   },
   "secrets": ["API_KEY", "DATABASE_URL"],
+  "envVars": {},
   "branches": {
-    "production": "main"
+    "production": "main",
+    "staging": null
+  },
+  "database": {
+    "type": "postgres",
+    "location": "external",
+    "dataDir": "",
+    "initCmd": "",
+    "migrateCmd": "alembic upgrade head",
+    "createAdmin": false,
+    "adminCmd": ""
   }
 }
 ```
@@ -160,7 +178,7 @@ AI:
 | `project.*` | deploy-setup detect | 自动检测 |
 | `server.host` | KeyReader (glo.env) | 读取 IP |
 | `server.user` | KeyReader (glo.env) | 读取 USER_NAME |
-| `server.sshKeyPath` | 默认值 | ~/.ssh/id_rsa |
+| `server.sshKeyPath` | 默认值 | ~/.ssh/id_ed25519 |
 | `domain.*` | 用户确认 | AskUserQuestion |
 | `secrets` | deploy-setup detect | 扫描 .env |
 
@@ -327,7 +345,7 @@ AI:
 - 后续部署直接使用，无需重新配置
 
 ### 4. 流程可追溯
-- 配置文件可版本控制
+- 真实 `.deploy/config.json` 留在本机；需要追溯或团队复用时提交脱敏示例配置
 - 部署过程可复现
 
 ### 5. 错误可恢复

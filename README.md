@@ -42,7 +42,7 @@ node dist/cli.js init -d /path/to/project -c /path/to/project/.deploy/config.jso
 node dist/cli.js all -d /path/to/project -c /path/to/project/.deploy/config.json
 ```
 
-`all --unattended` 只跳过最后的 `git push`，仍会执行服务器初始化和 Secrets 配置。业务 Secrets 可以用 `--env-file` 注入，SSH 私钥可以用 `--key` 指定。
+`all --unattended` 只跳过最后的 `git push`，仍会执行服务器初始化和 Secrets 配置；真正非交互使用时需要配合 `-c` 传入已有配置文件。业务 Secrets 可以用 `--env-file` 注入，SSH 私钥可以用 `--key` 指定。
 
 ## 验证
 
@@ -59,7 +59,7 @@ npm run verify
 - `node dist/cli.js --version`
 - `node dist/cli.js detect --json -d .`
 
-当前测试覆盖场景识别、proxy workflow 模板、JSON 输出、重新部署命令、legacy workflow 生成和 `.deploy/config.json` 写入。
+当前测试覆盖场景识别、proxy workflow 模板、JSON 输出、重新部署命令、legacy workflow 生成、`.deploy/config.json` 权限、SSH 命令生成、`.env` 写入安全和服务器补丁脚本渲染。
 
 有 Podman 或 Docker 权限的机器还可以跑容器级验证。该命令不使用 `sudo`，默认优先使用 Podman，缺失时回退到 Docker：
 
@@ -67,7 +67,7 @@ npm run verify
 npm run verify:container
 ```
 
-容器验证会启动 Ubuntu 容器，执行渲染后的 `server-patch.sh`。为了避免真实修改容器系统包，`apt-get`、`systemctl`、`rmmod` 等破坏性命令会被 stub，但会检查补丁脚本流程、自动更新配置和本地提权模块屏蔽文件是否真实写入。
+容器验证会启动 Ubuntu 容器，执行渲染后的 `server-patch.sh`。为了避免真实修改容器系统包，`apt-get`、`systemctl`、`rmmod` 等破坏性命令会被 stub，但会检查补丁脚本流程、失效 apt 源修复、`apt upgrade` 包下载 404 重试、自动更新配置和本地提权模块屏蔽文件是否真实写入。
 
 可以通过环境变量指定运行时或镜像：
 
@@ -82,7 +82,10 @@ VERIFY_CONTAINER_IMAGE=docker.io/library/ubuntu:24.04 npm run verify:container
 # 检测项目
 node dist/cli.js detect --json -d .
 
-# 生成部署配置和模板文件
+# 交互生成部署配置和模板文件
+node dist/cli.js init -d .
+
+# 用已有配置重新生成部署配置和模板文件
 node dist/cli.js init -d . -c .deploy/config.json
 
 # 检查域名 DNS 是否指向服务器
@@ -114,6 +117,8 @@ node dist/cli.js redeploy -c .deploy/config.json
 
 - `.deploy/config.json`：可复用部署配置，适合作为 `-c` 输入，也供 `redeploy` 默认读取。
 - `.deploy-setup-cache.json`：CLI 内部缓存，供 `probe`、`setup-server`、`setup-secrets`、`sync-env` 等命令读取。
+
+这两个文件包含服务器地址、用户名、SSH 私钥路径和非敏感环境变量值，默认写入为本机私有文件并已加入 `.gitignore`。需要团队共享时，建议提交脱敏后的示例配置，而不是提交真实 `.deploy/config.json`。
 
 最小配置示例：
 
@@ -215,6 +220,7 @@ node dist/cli.js patch-server -d . --dry-run
 - 写入 `/etc/apt/apt.conf.d/20auto-upgrades`，开启每日自动安全更新。
 - 写入 `/etc/modprobe.d/deploy-setup-local-lpe.conf`，阻止 `algif_aead`、`esp4`、`esp6`、`rxrpc` 这些近期 Linux 本地提权漏洞涉及的攻击面模块再次加载。
 - 尝试卸载已经加载的相关模块；如果模块仍在使用，会提示重启服务器后完全生效。
+- 补丁完成后会提示人工检查是否存在异常提权迹象，例如 sudo/登录日志、异常用户、异常 SUID 文件、可疑进程和计划任务。
 
 这些缓解覆盖的是当前已公开、可通过系统包升级或模块屏蔽处理的漏洞类型。内核升级通常需要重启才会真正切换到新内核；如果你的服务器依赖 IPsec、AFS/RXRPC 或相关内核模块，需要先评估模块屏蔽对业务的影响。
 
