@@ -3,6 +3,9 @@ import * as path from 'path';
 import * as os from 'os';
 import { GlobalConfig, ServerConfig } from '../core/types';
 
+const PRIVATE_FILE_MODE = 0o600;
+const PRIVATE_DIR_MODE = 0o700;
+
 function getConfigDir(): string {
   return process.env.DEPLOY_SETUP_CONFIG_DIR || path.join(os.homedir(), '.deploy-setup');
 }
@@ -14,8 +17,9 @@ function getConfigFile(): string {
 function ensureDir(): void {
   const dir = getConfigDir();
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
   }
+  fs.chmodSync(dir, PRIVATE_DIR_MODE);
 }
 
 export function loadGlobalConfig(): GlobalConfig {
@@ -29,7 +33,8 @@ export function loadGlobalConfig(): GlobalConfig {
 
 export function saveGlobalConfig(config: GlobalConfig): void {
   ensureDir();
-  fs.writeFileSync(getConfigFile(), JSON.stringify(config, null, 2), "utf-8");
+  fs.writeFileSync(getConfigFile(), JSON.stringify(config, null, 2), { encoding: "utf-8", mode: PRIVATE_FILE_MODE });
+  fs.chmodSync(getConfigFile(), PRIVATE_FILE_MODE);
 }
 
 export function getSavedServers(): Record<string, ServerConfig> {

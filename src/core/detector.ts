@@ -8,6 +8,7 @@ const KNOWN_NATIVE_MODULES = [
   're2', 'deasync', 'microtime', 'node-pty', 'leveldown',
   'grpc', '@grpc/grpc-js', 'node-hid', 'usb', 'serialport',
 ];
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function detectProject(rootDir: string): DetectionResult {
   const files = fs.readdirSync(rootDir);
@@ -193,6 +194,7 @@ function parseEnvPairs(envFilePath: string): { keys: string[]; pairs: Record<str
     const eqIdx = trimmed.indexOf('=');
     if (eqIdx === -1) continue;
     const key = trimmed.slice(0, eqIdx).trim();
+    if (!ENV_KEY_RE.test(key)) continue;
     const value = trimmed.slice(eqIdx + 1).trim();
     keys.push(key);
     pairs[key] = value;

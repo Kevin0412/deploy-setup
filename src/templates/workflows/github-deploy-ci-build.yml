@@ -97,9 +97,9 @@ jobs:
             # Generate .env
             cat > .env << 'ENVEOF'
 {{ENV_HARDCODED_LINES}}
+{{ENV_SECRET_LINES}}
             ENVEOF
             sed -i 's/^ *//' .env
-{{ENV_SECRET_LINES}}
 
             # Deploy
             docker compose up -d --no-build

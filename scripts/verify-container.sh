@@ -41,6 +41,13 @@ if [ "$1" = "update" ] && [ ! -f /tmp/deploy-setup-apt-update-seen ]; then
   echo "E: 仓库 “https://ppa.launchpadcontent.net/nilarimogard/webupd8/ubuntu noble Release” 没有 Release 文件。"
   exit 100
 fi
+if [ "$1" = "upgrade" ] && [ ! -f /tmp/deploy-setup-apt-upgrade-seen ]; then
+  touch /tmp/deploy-setup-apt-upgrade-seen
+  echo "错误:1 http://cn.archive.ubuntu.com/ubuntu noble-updates/main amd64 linux-libc-dev amd64 6.8.0-117.117"
+  echo "  404  Not Found [IP: 198.18.0.33 80]"
+  echo "E: 无法下载 http://cn.archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-libc-dev_6.8.0-117.117_amd64.deb  404  Not Found [IP: 198.18.0.33 80]"
+  exit 100
+fi
 echo stub-apt-get "$@"
 exit 0
 APTSTUB
@@ -53,6 +60,7 @@ PATH=/tmp/stubs:/usr/sbin:/usr/bin:/sbin:/bin bash /server-patch.sh
 test -f /etc/apt/apt.conf.d/20auto-upgrades
 grep -q "Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades
 grep -q "disabled by deploy-setup" /etc/apt/sources.list.d/deploy-setup-bad-ppa.list
+test -f /tmp/deploy-setup-apt-upgrade-seen
 grep -q "install algif_aead /bin/false" /etc/modprobe.d/deploy-setup-local-lpe.conf
 grep -q "install rxrpc /bin/false" /etc/modprobe.d/deploy-setup-local-lpe.conf
 echo CONTAINER_PATCH_TEST_OK'

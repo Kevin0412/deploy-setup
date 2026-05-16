@@ -141,9 +141,9 @@ if [ ! -f "${APP_DIR}/.env" ]; then
 {{ENV_SECRET_PLACEHOLDER_LINES}}
 ENVFILE
     sed -i 's/^ *//' "${APP_DIR}/.env"
+    chmod 600 "${APP_DIR}/.env"
     ok "已生成 .env（非敏感值已填入，敏感值由 CI/CD 注入）"
     echo "  ${APP_DIR}/.env"
-    cat "${APP_DIR}/.env"
 else
     ok ".env 已存在，跳过"
 fi

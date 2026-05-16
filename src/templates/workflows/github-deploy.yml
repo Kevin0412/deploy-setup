@@ -49,9 +49,9 @@ jobs:
             # Generate .env
             cat > .env << 'ENVEOF'
 {{ENV_HARDCODED_LINES}}
+{{ENV_SECRET_LINES}}
             ENVEOF
             sed -i 's/^ *//' .env
-{{ENV_SECRET_LINES}}
 {{#IF SKIP_BUILD}}
             # Using existing docker-compose.yml, skip build
             docker compose up -d --remove-orphans

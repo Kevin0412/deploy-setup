@@ -137,6 +137,55 @@ apt_update_with_repair() {
     as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
 }
 
+is_retryable_apt_fetch_error() {
+    local log_file="$1"
+    grep -Eq '404|Not Found|无法下载|Hash Sum mismatch|File has unexpected size|--fix-missing' "$log_file"
+}
+
+refresh_apt_indexes_for_retry() {
+    warn "刷新 apt 缓存并重试"
+    as_root apt-get clean 2>/dev/null || true
+    as_root rm -rf /var/lib/apt/lists/partial 2>/dev/null || true
+    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get update \
+        -o Acquire::http::No-Cache=true \
+        -o Acquire::https::No-Cache=true
+}
+
+apt_command_with_mirror_retry() {
+    local label="$1"
+    shift
+    local log_file
+    log_file="$(mktemp)"
+
+    if as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get "$@" 2>&1 | tee "$log_file"; then
+        rm -f "$log_file"
+        return
+    fi
+
+    if ! is_retryable_apt_fetch_error "$log_file"; then
+        rm -f "$log_file"
+        return 1
+    fi
+
+    warn "${label} 遇到镜像下载错误，准备刷新索引后重试"
+    refresh_apt_indexes_for_retry
+
+    if as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get --fix-missing "$@" 2>&1 | tee "$log_file"; then
+        rm -f "$log_file"
+        return
+    fi
+
+    if is_retryable_apt_fetch_error "$log_file"; then
+        warn "${label} 仍因镜像不同步失败，已跳过该 apt 步骤；请稍后重跑 patch-server 或更换镜像源"
+        rm -f "$log_file"
+        return
+    fi
+
+    rm -f "$log_file"
+    return 1
+}
+
 run_apt_security_updates() {
     if ! command -v apt-get &> /dev/null; then
         echo "  非 apt 系统，跳过自动安全升级"
@@ -146,8 +195,8 @@ run_apt_security_updates() {
     APT_OPTS="-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
     apt_update_with_repair
-    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install ${APT_OPTS} unattended-upgrades kmod
-    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get upgrade ${APT_OPTS}
+    apt_command_with_mirror_retry "安装安全更新依赖" install ${APT_OPTS} unattended-upgrades kmod
+    apt_command_with_mirror_retry "系统安全升级" upgrade ${APT_OPTS}
 
     as_root mkdir -p /etc/apt/apt.conf.d
     write_root_file /etc/apt/apt.conf.d/20auto-upgrades <<'APTCONF'
@@ -200,6 +249,10 @@ report_reboot_status() {
     fi
 }
 
+report_security_review_hint() {
+    warn "请检查是否有异常提权的情况：重点查看 sudo/登录日志、异常用户、异常 SUID 文件、可疑进程和计划任务"
+}
+
 echo -e "${CYAN}=== deploy-setup 服务器补丁: ${PATCH_TARGET} ===${NC}"
 
 step "1/3 应用系统安全更新"
@@ -211,6 +264,7 @@ apply_kernel_lpe_mitigations
 
 step "3/3 检查重启状态"
 report_reboot_status
+report_security_review_hint
 
 echo ""
 echo -e "${GREEN}=== 服务器补丁完成 ===${NC}"

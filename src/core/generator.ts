@@ -11,6 +11,23 @@ interface GeneratedFile {
   backedUp: boolean;
 }
 
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function assertEnvKey(key: string): string {
+  if (!ENV_KEY_RE.test(key)) {
+    throw new Error(`环境变量名不安全: ${key}。仅支持字母、数字和下划线，且不能以数字开头。`);
+  }
+  return key;
+}
+
+function normalizeEnvValue(value: unknown): string {
+  return String(value ?? '').replace(/\r?\n/g, '\\n');
+}
+
+function envAssignmentLine(indent: string, key: string, value: unknown): string {
+  return `${indent}${assertEnvKey(key)}=${normalizeEnvValue(value)}`;
+}
+
 export function generateFiles(config: CollectedConfig, outputDir: string): GeneratedFile[] {
   const generated: GeneratedFile[] = [];
 
@@ -179,18 +196,21 @@ function buildTemplateVars(config: CollectedConfig, skipDockerFiles: boolean = f
     PATCH_TARGET: config.project.name || 'server',
   }).replace(/\r\n/g, '\n');
 
+  const envEntries = Object.entries(config.envVars || {}).map(([key, value]) => [assertEnvKey(key), value] as const);
+  const secretKeys = (config.secrets || []).map(assertEnvKey);
+
   // ENV_HARDCODED_LINES: non-sensitive vars written directly into .env
-  const envHardcodedLines = Object.entries(config.envVars || {})
-    .map(([k, v]) => `            ${k}=${v}`)
+  const envHardcodedLines = envEntries
+    .map(([k, v]) => envAssignmentLine('            ', k, v))
     .join('\n');
 
-  // ENV_SECRET_LINES: sensitive vars injected from GitHub Secrets
-  const envSecretLines = config.secrets
-    .map(key => `            echo "${key}=\${{ secrets.${key} }}" >> .env`)
+  // ENV_SECRET_LINES lives inside a single-quoted heredoc in workflow templates.
+  const envSecretLines = secretKeys
+    .map(key => `            ${key}=\${{ secrets.${key} }}`)
     .join('\n');
 
   // ENV_SECRET_PLACEHOLDER_LINES: empty placeholders for secrets in server-init .env
-  const envSecretPlaceholderLines = config.secrets
+  const envSecretPlaceholderLines = secretKeys
     .map(key => `            ${key}=`)
     .join('\n');
 
@@ -261,12 +281,15 @@ function buildTemplateVars(config: CollectedConfig, skipDockerFiles: boolean = f
     COMPOSE_FILE: 'docker-compose.prod.yml',
     SERVER_BUILD_CMD: config.project.buildCmd ? `pnpm --filter server build` : '',
     ADMIN_BUILD_CMD: '',
-    ENV_PROXY_SECRET_ENV_BLOCK: config.secrets
+    ENV_PROXY_SECRET_ENV_BLOCK: secretKeys
       .map(key => `          ${key}: \${{ secrets.${key} }}`)
       .join('\n'),
     ENV_PROXY_WRITE_BLOCK: [
-      ...Object.entries(config.envVars || {}).map(([k, v]) => `          echo "${k}=${v}" >> .env`),
-      ...config.secrets.map(key => `          echo "${key}=\${${key}}" >> .env`),
+      `          cat > .env << 'ENVEOF'`,
+      ...envEntries.map(([k, v]) => envAssignmentLine('          ', k, v)),
+      `          ENVEOF`,
+      `          sed -i 's/^ *//' .env`,
+      ...secretKeys.map(key => `          printf '%s=%s\\n' '${key}' "\${${key}}" >> .env`),
     ].join('\n'),
     HEALTH_PATH: '',
     NGINX_SYNC_CMD: '',

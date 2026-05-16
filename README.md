@@ -210,6 +210,7 @@ node dist/cli.js patch-server -d . --dry-run
 补丁脚本会执行：
 
 - 对 Debian/Ubuntu 服务器执行 `apt-get update`、安装 `unattended-upgrades`、执行非交互式 `apt-get upgrade`。
+- 如果第三方 apt 源失效或镜像临时 404，会自动禁用失效源、刷新 apt 缓存并重试；仍因镜像不同步失败时，会提示稍后重跑或更换镜像源，并继续执行内核模块缓解。
 - 如果宿主机已安装 Nginx，会在升级后尝试重启 Nginx，让修复后的包生效。
 - 写入 `/etc/apt/apt.conf.d/20auto-upgrades`，开启每日自动安全更新。
 - 写入 `/etc/modprobe.d/deploy-setup-local-lpe.conf`，阻止 `algif_aead`、`esp4`、`esp6`、`rxrpc` 这些近期 Linux 本地提权漏洞涉及的攻击面模块再次加载。

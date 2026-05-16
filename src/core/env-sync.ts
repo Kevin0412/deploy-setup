@@ -1,5 +1,18 @@
 import { CollectedConfig } from './types';
 
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function assertEnvKey(key: string): string {
+  if (!ENV_KEY_RE.test(key)) {
+    throw new Error(`环境变量名不安全: ${key}。仅支持字母、数字和下划线，且不能以数字开头。`);
+  }
+  return key;
+}
+
+function normalizeEnvValue(value: unknown): string {
+  return String(value ?? '').replace(/\r?\n/g, '\\n');
+}
+
 export interface EnvDiff {
   added: string[];
   removed: string[];
@@ -42,15 +55,14 @@ export function buildEnvBlock(envVars: Record<string, string>, secrets: string[]
   // heredoc block for hardcoded vars
   lines.push(`${indent}cat > .env << 'ENVEOF'`);
   for (const [key, value] of Object.entries(envVars)) {
-    lines.push(`${indent}${key}=${value}`);
+    lines.push(`${indent}${assertEnvKey(key)}=${normalizeEnvValue(value)}`);
+  }
+  for (const key of secrets) {
+    const safeKey = assertEnvKey(key);
+    lines.push(`${indent}${safeKey}=\${{ secrets.${safeKey} }}`);
   }
   lines.push(`${indent}ENVEOF`);
   lines.push(`${indent}sed -i 's/^ *//' .env`);
-
-  // secret lines appended via echo
-  for (const key of secrets) {
-    lines.push(`${indent}echo "${key}=\${{ secrets.${key} }}" >> .env`);
-  }
 
   return lines.join('\n');
 }

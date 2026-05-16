@@ -88,7 +88,8 @@ describe('generated deployment output', () => {
     const dockerfile = fs.readFileSync(path.join(tmpDir, 'Dockerfile'), 'utf-8')
 
     expect(serverInit).toContain('unattended-upgrades')
-    expect(serverInit).toContain('apt-get upgrade ${APT_OPTS}')
+    expect(serverInit).toContain('apt_command_with_mirror_retry "系统安全升级" upgrade ${APT_OPTS}')
+    expect(serverInit).toContain('--fix-missing')
     expect(serverInit).toContain('as_root env DEBIAN_FRONTEND=noninteractive')
     expect(serverInit).toContain('sudo tee "$target" >/dev/null')
     expect(serverInit).toContain('install algif_aead /bin/false')
@@ -96,6 +97,24 @@ describe('generated deployment output', () => {
     expect(serverInit).toContain('install esp6 /bin/false')
     expect(serverInit).toContain('install rxrpc /bin/false')
     expect(dockerfile).not.toContain('FROM nginx:')
+  })
+
+  it('writes generated .env values without shell echo injection', () => {
+    generateFiles(baseConfig({
+      secrets: ['API_TOKEN'],
+      envVars: {
+        NODE_ENV: 'production',
+        CALLBACK: '$(touch /tmp/deploy-setup-pwned)',
+      },
+    }), tmpDir)
+
+    const workflow = fs.readFileSync(path.join(tmpDir, '.github', 'workflows', 'deploy.yml'), 'utf-8')
+
+    expect(workflow).toContain("cat > .env << 'ENVEOF'")
+    expect(workflow).toContain('CALLBACK=$(touch /tmp/deploy-setup-pwned)')
+    expect(workflow).toContain('API_TOKEN=${{ secrets.API_TOKEN }}')
+    expect(workflow).not.toContain('echo "CALLBACK=')
+    expect(workflow).not.toContain('echo "API_TOKEN=')
   })
 
   it('pins SPA nginx runtime image to a fixed security line', () => {
@@ -125,6 +144,7 @@ describe('generated deployment output', () => {
 
     const savedPath = path.join(tmpDir, '.deploy', 'config.json')
     expect(fs.existsSync(savedPath)).toBe(true)
+    expect(fs.statSync(savedPath).mode & 0o777).toBe(0o600)
     expect(JSON.parse(fs.readFileSync(savedPath, 'utf-8')).project.name).toBe('demo-app')
   })
 })

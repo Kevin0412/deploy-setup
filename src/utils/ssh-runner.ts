@@ -61,7 +61,7 @@ export function buildSshCommand(
 
   return [
     'ssh',
-    '-o StrictHostKeyChecking=no',
+    '-o StrictHostKeyChecking=accept-new',
     '-o BatchMode=yes',
     `-o ConnectTimeout=${connectTimeout}`,
     `-p ${port}`,
@@ -85,7 +85,7 @@ export function buildScpCommand(
 
   return [
     'scp',
-    '-o StrictHostKeyChecking=no',
+    '-o StrictHostKeyChecking=accept-new',
     '-o BatchMode=yes',
     `-o ConnectTimeout=${connectTimeout}`,
     `-P ${port}`,

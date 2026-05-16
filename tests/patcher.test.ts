@@ -72,8 +72,12 @@ describe('server patching', () => {
 
     expect(script).toContain('PATCH_TARGET="demo-app"')
     expect(script).toContain('deploy-setup 服务器补丁: ${PATCH_TARGET}')
-    expect(script).toContain('apt-get upgrade ${APT_OPTS}')
     expect(script).toContain('as_root env DEBIAN_FRONTEND=noninteractive')
+    expect(script).toContain('apt_command_with_mirror_retry "系统安全升级" upgrade ${APT_OPTS}')
+    expect(script).toContain('refresh_apt_indexes_for_retry')
+    expect(script).toContain('--fix-missing')
+    expect(script).toContain('请稍后重跑 patch-server 或更换镜像源')
+    expect(script).toContain('请检查是否有异常提权的情况')
     expect(script).toContain('sudo tee "$target" >/dev/null')
     expect(script).toContain('install algif_aead /bin/false')
     expect(script).toContain('install rxrpc /bin/false')
@@ -95,7 +99,7 @@ describe('server patching', () => {
     patchServer({ config, projectDir: tmpDir })
 
     expect(childProcess.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=30 -p 22'),
+      expect.stringContaining('ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=30 -p 22'),
       expect.objectContaining({
         cwd: tmpDir,
         input: expect.stringContaining('PATCH_TARGET="demo-app"'),
@@ -121,7 +125,7 @@ describe('server patching', () => {
     const calls = vi.mocked(childProcess.execSync).mock.calls
     expect(calls[0][0]).toEqual(expect.stringContaining('scp '))
     expect(calls[0][0]).toEqual(expect.stringContaining('-P 2202'))
-    expect(calls[1][0]).toEqual(expect.stringContaining('ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=30 -p 2202'))
+    expect(calls[1][0]).toEqual(expect.stringContaining('ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=30 -p 2202'))
     expect(calls[1][0]).toEqual(expect.stringContaining('-tt'))
     expect(calls[1][0]).toEqual(expect.stringContaining("'deploy@203.0.113.10'"))
     expect(calls[1][1]).toEqual(expect.objectContaining({ stdio: 'inherit' }))

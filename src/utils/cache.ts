@@ -3,9 +3,16 @@ import * as path from 'path';
 import { CollectedConfig } from '../core/types';
 
 const CACHE_FILE = '.deploy-setup-cache.json';
+const PRIVATE_FILE_MODE = 0o600;
+const PRIVATE_DIR_MODE = 0o700;
+
+function writePrivateJson(file: string, value: unknown): void {
+  fs.writeFileSync(file, JSON.stringify(value, null, 2), { encoding: 'utf-8', mode: PRIVATE_FILE_MODE });
+  fs.chmodSync(file, PRIVATE_FILE_MODE);
+}
 
 export function saveCache(dir: string, config: CollectedConfig): void {
-  fs.writeFileSync(path.join(dir, CACHE_FILE), JSON.stringify(config, null, 2), 'utf-8');
+  writePrivateJson(path.join(dir, CACHE_FILE), config);
 }
 
 export function loadCache(dir: string): CollectedConfig {
@@ -36,6 +43,7 @@ export function loadDeployConfig(dir: string, configPath?: string): CollectedCon
 
 export function saveDeployConfig(dir: string, config: CollectedConfig): void {
   const deployDir = path.join(dir, '.deploy');
-  fs.mkdirSync(deployDir, { recursive: true });
-  fs.writeFileSync(path.join(deployDir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8');
+  fs.mkdirSync(deployDir, { recursive: true, mode: PRIVATE_DIR_MODE });
+  fs.chmodSync(deployDir, PRIVATE_DIR_MODE);
+  writePrivateJson(path.join(deployDir, 'config.json'), config);
 }
