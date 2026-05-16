@@ -15,6 +15,7 @@ export type DbType = 'sqlite' | 'postgres' | 'mysql' | 'none';
 export type OrmTool = 'alembic' | 'django-migrations' | 'prisma' | 'typeorm' | 'none';
 
 export type Scenario = 'simple-web' | 'monorepo-node' | 'tauri-desktop';
+export type PostInitAction = 'none' | 'setup-server' | 'patch-server';
 
 export interface ProxyRepoConfig {
   enabled: boolean;
@@ -68,6 +69,8 @@ export interface ServerConfig {
   host: string;
   user: string;
   sshKeyPath: string;
+  sshPort?: number;
+  sudoMode?: 'none' | 'tty';
   deployDir: string;
 }
 
@@ -98,6 +101,7 @@ export interface CollectedConfig {
   secrets: string[];
   envVars: Record<string, string>;
   branches: BranchConfig;
+  postInitAction?: PostInitAction;
   deploymentMode?: 'generated' | 'existing-compose';
   proxyMode?: 'host-nginx' | 'existing-caddy' | 'none';
 

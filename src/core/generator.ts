@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { CollectedConfig, Scenario } from './types';
 import { replacePlaceholders, readTemplate } from '../utils/template';
 import { pushProxyWorkflows } from './proxy-repo';
+import { normalizeSshPort } from '../utils/ssh-runner';
 
 interface GeneratedFile {
   path: string;
@@ -206,6 +207,7 @@ function buildTemplateVars(config: CollectedConfig, skipDockerFiles: boolean = f
     DEPLOY_DIR: config.server.deployDir,
     SERVER_HOST: config.server.host,
     SERVER_USER: config.server.user,
+    SERVER_PORT: String(normalizeSshPort(config.server.sshPort)),
     BRANCH_PRODUCTION: config.branches.production,
     DOMAIN_NAME: config.domain.name || 'localhost',
     DOMAIN_ENABLED: String(config.domain.enabled),

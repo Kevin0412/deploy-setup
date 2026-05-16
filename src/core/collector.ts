@@ -1,9 +1,10 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import { DetectionResult, ProjectType, CollectedConfig, Language, ServerConfig, FRAMEWORK_PROFILES } from './types';
+import { DetectionResult, ProjectType, CollectedConfig, Language, ServerConfig, FRAMEWORK_PROFILES, PostInitAction } from './types';
 import { getSavedServers, saveServer } from '../utils/config-store';
 import { execSync } from 'child_process';
-import * as os from 'os';
+import * as fs from 'fs';
+import { buildSshCommand, normalizeSshPort, resolveSshKeyPath } from '../utils/ssh-runner';
 
 const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
   flask: 'Flask',
@@ -18,14 +19,15 @@ const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
 };
 
 async function scanRemotePorts(server: ServerConfig): Promise<number[]> {
-  const { host, user, sshKeyPath } = server;
-  const resolvedKeyPath = (sshKeyPath || '~/.ssh/id_rsa').replace(/^~/, os.homedir());
-  const keyArg = require('fs').existsSync(resolvedKeyPath) ? `-i "${resolvedKeyPath}"` : '';
-
   try {
     console.log(chalk.gray('  扫描服务器端口占用...'));
+    const sshCmd = buildSshCommand(
+      server,
+      `ss -tlnp | awk '{print $4}' | grep -oP ':\\K[0-9]+$' | sort -un`,
+      { connectTimeout: 10 },
+    );
     const result = execSync(
-      `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${keyArg} ${user}@${host} "ss -tlnp | awk '{print \\$4}' | grep -oP ':\\K[0-9]+$' | sort -un"`,
+      sshCmd,
       { encoding: 'utf-8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }
     );
     const ports = result.trim().split('\n').filter(Boolean).map(Number).filter(n => !isNaN(n));
@@ -45,14 +47,104 @@ function findAvailablePort(defaultPort: number, occupiedPorts: Set<number>): num
   return port;
 }
 
+const COMMON_SSH_KEYS = [
+  '~/.ssh/id_ed25519',
+  '~/.ssh/id_rsa',
+  '~/.ssh/id_ecdsa',
+  '~/.ssh/id_ed25519_sk',
+  '~/.ssh/id_ecdsa_sk',
+];
+
+function buildSshKeyChoices() {
+  const defaultKey = COMMON_SSH_KEYS.find(key => fs.existsSync(resolveSshKeyPath(key))) || '~/.ssh/id_ed25519';
+  return {
+    defaultKey,
+    choices: [
+      ...COMMON_SSH_KEYS.map(key => ({
+        name: fs.existsSync(resolveSshKeyPath(key)) ? `${key} (存在)` : key,
+        value: key,
+      })),
+      { name: '手动输入其他私钥路径...', value: '__manual__' },
+    ],
+  };
+}
+
+async function promptSshKeyPath(defaultKey?: string): Promise<string> {
+  const { choices, defaultKey: detectedDefaultKey } = buildSshKeyChoices();
+  const defaultChoice = defaultKey && !COMMON_SSH_KEYS.includes(defaultKey)
+    ? '__manual__'
+    : (defaultKey || detectedDefaultKey);
+  const { sshKeyChoice } = await inquirer.prompt([{
+    type: 'list',
+    name: 'sshKeyChoice',
+    message: 'SSH 私钥路径:',
+    choices,
+    default: defaultChoice,
+  }]);
+
+  if (sshKeyChoice !== '__manual__') {
+    return sshKeyChoice;
+  }
+
+  const { sshKeyPath } = await inquirer.prompt([{
+    type: 'input',
+    name: 'sshKeyPath',
+    message: '输入 SSH 私钥路径:',
+    default: defaultKey || detectedDefaultKey,
+    validate: (v: string) => v.trim().length > 0 || '不能为空',
+  }]);
+  return sshKeyPath;
+}
+
+async function promptSudoMode(user: string, defaultMode?: 'none' | 'tty'): Promise<'none' | 'tty'> {
+  if (user === 'root') {
+    return 'none';
+  }
+
+  const { sudoMode } = await inquirer.prompt([{
+    type: 'list',
+    name: 'sudoMode',
+    message: '需要 sudo 时如何处理?',
+    choices: [
+      {
+        name: '通过 SSH 远程终端输入 sudo 密码（不保存密码）',
+        value: 'tty',
+      },
+      {
+        name: '不使用交互 sudo（已配置免密 sudo / 无需 sudo）',
+        value: 'none',
+      },
+    ],
+    default: defaultMode || 'tty',
+  }]);
+
+  return sudoMode;
+}
+
+async function promptPostInitActionChoice(defaultAction: PostInitAction = 'none'): Promise<PostInitAction> {
+  const { postInitAction } = await inquirer.prompt([{
+    type: 'list',
+    name: 'postInitAction',
+    message: '服务器配置完成后执行什么?',
+    choices: [
+      { name: '暂不执行，只生成配置文件', value: 'none' },
+      { name: '初始化服务器 / 部署前准备（需要部署目录）', value: 'setup-server' },
+      { name: '已部署服务器：只打安全补丁（跳过部署目录）', value: 'patch-server' },
+    ],
+    default: defaultAction,
+  }]);
+
+  return postInitAction;
+}
+
 export async function collectConfig(detection: DetectionResult, projectName: string): Promise<CollectedConfig> {
   console.log(chalk.cyan('\n📋 开始收集部署配置...\n'));
 
   // 先收集服务器信息，以便扫描端口
-  const server = await collectServerConfig();
+  const { server, postInitAction } = await collectServerConfig();
 
   // SSH 扫描服务器已占端口
-  const occupiedPorts = await scanRemotePorts(server);
+  const occupiedPorts = postInitAction === 'patch-server' ? [] : await scanRemotePorts(server);
   const occupiedSet = new Set(occupiedPorts);
 
   const project = await collectProjectConfig(detection, projectName, occupiedSet);
@@ -81,6 +173,7 @@ export async function collectConfig(detection: DetectionResult, projectName: str
     secrets,
     envVars,
     branches,
+    postInitAction,
     deploymentMode,
     proxyMode,
     database,
@@ -203,7 +296,7 @@ async function collectProjectConfig(detection: DetectionResult, projectName: str
   };
 }
 
-async function collectServerConfig(): Promise<ServerConfig> {
+async function collectServerConfig(): Promise<{ server: ServerConfig; postInitAction: PostInitAction }> {
   const saved = getSavedServers();
   const serverNames = Object.keys(saved);
 
@@ -216,7 +309,7 @@ async function collectServerConfig(): Promise<ServerConfig> {
       message: '选择服务器:',
       choices: [
         ...serverNames.map(name => ({
-          name: `${name} (${saved[name].host})`,
+          name: `${name} (${saved[name].host}:${saved[name].sshPort || 22})`,
           value: name,
         })),
         { name: '+ 添加新服务器', value: '__new__' },
@@ -224,20 +317,41 @@ async function collectServerConfig(): Promise<ServerConfig> {
     }]);
 
     if (choice !== '__new__') {
-      server = saved[choice];
-      // Allow overriding deployDir
-      const { deployDir } = await inquirer.prompt([{
-        type: 'input',
-        name: 'deployDir',
-        message: '部署目录:',
-        default: server.deployDir,
+      server = { ...saved[choice] };
+      const { sshPort } = await inquirer.prompt([{
+        type: 'number',
+        name: 'sshPort',
+        message: 'SSH 端口:',
+        default: server.sshPort || 22,
+        validate: (v: number) => {
+          try {
+            normalizeSshPort(v);
+            return true;
+          } catch (err: any) {
+            return err.message;
+          }
+        },
       }]);
-      server.deployDir = deployDir;
-      return server;
+      server.sshPort = normalizeSshPort(sshPort);
+      server.sshKeyPath = await promptSshKeyPath(server.sshKeyPath);
+      server.sudoMode = await promptSudoMode(server.user, server.sudoMode);
+      const postInitAction = await promptPostInitActionChoice();
+      if (postInitAction === 'patch-server') {
+        server.deployDir = server.deployDir || '/opt/apps';
+      } else {
+        const { deployDir } = await inquirer.prompt([{
+          type: 'input',
+          name: 'deployDir',
+          message: '部署目录:',
+          default: server.deployDir,
+        }]);
+        server.deployDir = deployDir;
+      }
+      return { server, postInitAction };
     }
   }
 
-  const answers = await inquirer.prompt([
+  const identity = await inquirer.prompt([
     {
       type: 'input',
       name: 'host',
@@ -251,18 +365,43 @@ async function collectServerConfig(): Promise<ServerConfig> {
       default: 'root',
     },
     {
-      type: 'input',
-      name: 'sshKeyPath',
-      message: 'SSH 私钥路径:',
-      default: '~/.ssh/id_rsa',
-    },
-    {
-      type: 'input',
-      name: 'deployDir',
-      message: '部署目录:',
-      default: '/opt/apps',
+      type: 'number',
+      name: 'sshPort',
+      message: 'SSH 端口:',
+      default: 22,
+      validate: (v: number) => {
+        try {
+          normalizeSshPort(v);
+          return true;
+        } catch (err: any) {
+          return err.message;
+        }
+      },
     },
   ]);
+
+  const sshKeyPath = await promptSshKeyPath();
+  const sudoMode = await promptSudoMode(identity.user);
+  const postInitAction = await promptPostInitActionChoice();
+
+  const rest = postInitAction === 'patch-server'
+    ? { deployDir: '/opt/apps' }
+    : await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'deployDir',
+        message: '部署目录:',
+        default: '/opt/apps',
+      },
+    ]);
+
+  const answers: ServerConfig = {
+    ...identity,
+    sshPort: normalizeSshPort(identity.sshPort),
+    sshKeyPath,
+    sudoMode,
+    ...rest,
+  };
 
   // Save for future use
   const { saveName } = await inquirer.prompt([{
@@ -273,7 +412,7 @@ async function collectServerConfig(): Promise<ServerConfig> {
   }]);
   saveServer(saveName, answers);
 
-  return answers;
+  return { server: answers, postInitAction };
 }
 
 async function collectDomainConfig() {
@@ -424,8 +563,23 @@ async function reviewLoop(config: CollectedConfig, detection: DetectionResult): 
     console.log(chalk.cyan('\n━━━ 配置摘要 ━━━'));
     console.log(`  项目: ${config.project.name} (${config.project.type})`);
     console.log(`  端口: ${config.project.port}`);
-    console.log(`  服务器: ${config.server.user}@${config.server.host}`);
-    console.log(`  部署目录: ${config.server.deployDir}/${config.project.name}`);
+    console.log(`  服务器: ${config.server.user}@${config.server.host}:${config.server.sshPort || 22}`);
+    if (config.server.sudoMode === 'tty') {
+      console.log('  sudo: SSH 远程终端输入密码（不保存）');
+    }
+    const postInitActionLabels: Record<PostInitAction, string> = {
+      none: '只生成配置',
+      'setup-server': '初始化服务器 / 部署前准备',
+      'patch-server': '已部署服务器只打安全补丁',
+    };
+    if (config.postInitAction) {
+      console.log(`  下一步: ${postInitActionLabels[config.postInitAction]}`);
+    }
+    if (config.postInitAction === 'patch-server') {
+      console.log('  部署目录: 跳过（仅打安全补丁）');
+    } else {
+      console.log(`  部署目录: ${config.server.deployDir}/${config.project.name}`);
+    }
     if (config.domain.enabled) {
       console.log(`  域名: ${config.domain.name} (HTTPS: ${config.domain.https ? '是' : '否'})`);
     }
@@ -464,7 +618,9 @@ async function reviewLoop(config: CollectedConfig, detection: DetectionResult): 
       const p = await collectProjectConfig(detection, config.project.name, new Set());
       config.project = p;
     } else if (action === 'server') {
-      config.server = await collectServerConfig();
+      const { server, postInitAction } = await collectServerConfig();
+      config.server = server;
+      config.postInitAction = postInitAction;
     } else if (action === 'domain') {
       config.domain = await collectDomainConfig();
     }

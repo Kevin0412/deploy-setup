@@ -74,6 +74,7 @@ describe('generated deployment output', () => {
 
     expect(workflow).toContain('docker compose build')
     expect(workflow).toContain('docker compose up -d --remove-orphans')
+    expect(workflow).toContain("port: ${{ secrets.SERVER_PORT || '22' }}")
     expect(workflow).toContain('[ "$STATUS" -lt 400 ]')
     expect(workflow).not.toContain('[ "$STATUS" -lt 500 ]')
     expect(workflow).not.toContain('Using existing docker-compose.yml, skip build')
@@ -88,6 +89,8 @@ describe('generated deployment output', () => {
 
     expect(serverInit).toContain('unattended-upgrades')
     expect(serverInit).toContain('apt-get upgrade ${APT_OPTS}')
+    expect(serverInit).toContain('as_root env DEBIAN_FRONTEND=noninteractive')
+    expect(serverInit).toContain('sudo tee "$target" >/dev/null')
     expect(serverInit).toContain('install algif_aead /bin/false')
     expect(serverInit).toContain('install esp4 /bin/false')
     expect(serverInit).toContain('install esp6 /bin/false')

@@ -18,6 +18,7 @@ import { redeployProject } from './core/redeployer';
 import { deriveProxyRepoConfig } from './core/strategy';
 import { redirectConsoleToStderr, emitJsonSuccess, emitJsonError } from './utils/json-output';
 import { patchServer } from './core/patcher';
+import { normalizeSshPort, resolveSshKeyPath, runRemoteScript } from './utils/ssh-runner';
 
 const packageJson = require('../package.json');
 const program = new Command();
@@ -34,6 +35,7 @@ program
   .option('-d, --dir <dir>', '项目目录', process.cwd())
   .option('-c, --config <file>', '使用 JSON 配置文件（跳过交互）')
   .option('-k, --key <path>', 'SSH 私钥文件路径')
+  .option('-P, --port <port>', 'SSH 端口')
   .option('-e, --env-file <path>', '从文件读取密钥值（跳过交互输入）')
   .option('--unattended', '非交互模式（需配合 -c 使用）')
   .option('--json', '结构化 JSON 输出（stdout = JSON，stderr = 日志）')
@@ -51,10 +53,10 @@ program
     await runCheckDns(projectDir);
 
     // Step 3: setup-server
-    await runSetupServer(projectDir);
+    await runSetupServer(projectDir, options.key, options.port);
 
     // Step 4: setup-secrets
-    await runSetupSecrets(projectDir, options.key, options.envFile);
+    await runSetupSecrets(projectDir, options.key, options.envFile, options.port);
 
     // Step 5: git push (skip in unattended mode)
     if (!options.unattended) {
@@ -92,10 +94,13 @@ program
         nextStep: 'push-and-verify',
         secretsRequired: [
           ...(proxyRepo?.enabled ? [proxyRepo.checkoutTokenSecret] : []),
-          'SERVER_HOST', 'SERVER_USER', 'SSH_PRIVATE_KEY',
+          'SERVER_HOST', 'SERVER_USER', 'SERVER_PORT', 'SSH_PRIVATE_KEY',
         ],
       });
     } else {
+      if (!options.unattended) {
+        await promptPostInitAction(projectDir, config);
+      }
       printNextSteps(config);
     }
   });
@@ -114,8 +119,10 @@ program
   .command('setup-server')
   .description('SSH 到服务器执行初始化脚本')
   .option('-d, --dir <dir>', '项目目录', process.cwd())
+  .option('-k, --key <path>', 'SSH 私钥文件路径')
+  .option('-P, --port <port>', 'SSH 端口')
   .action(async (options) => {
-    await runSetupServer(path.resolve(options.dir));
+    await runSetupServer(path.resolve(options.dir), options.key, options.port);
   });
 
 // ─── patch-server ───
@@ -126,11 +133,12 @@ program
   .option('-d, --dir <dir>', '项目目录', process.cwd())
   .option('-c, --config <path>', 'deploy config 路径（默认 .deploy/config.json，回退 .deploy-setup-cache.json）')
   .option('-k, --key <path>', 'SSH 私钥文件路径')
+  .option('-P, --port <port>', 'SSH 端口')
   .option('--dry-run', '仅输出将执行的补丁脚本，不连接服务器', false)
   .action(async (options) => {
     const projectDir = path.resolve(options.dir);
     const config = loadDeployConfig(projectDir, options.config);
-    await runPatchServer(projectDir, config, options.key, options.dryRun);
+    await runPatchServer(projectDir, config, options.key, options.port, options.dryRun);
   });
 
 // ─── setup-secrets ───
@@ -139,9 +147,10 @@ program
   .description('使用 gh CLI 配置 GitHub Secrets')
   .option('-d, --dir <dir>', '项目目录', process.cwd())
   .option('-k, --key <path>', 'SSH 私钥文件路径')
+  .option('-P, --port <port>', 'SSH 端口')
   .option('-e, --env-file <path>', '从文件读取密钥值（跳过交互输入）')
   .action(async (options) => {
-    await runSetupSecrets(path.resolve(options.dir), options.key, options.envFile);
+    await runSetupSecrets(path.resolve(options.dir), options.key, options.envFile, options.port);
   });
 
 // ─── detect ───
@@ -355,7 +364,37 @@ async function runCheckDns(projectDir: string): Promise<void> {
   }
 }
 
-async function runSetupServer(projectDir: string): Promise<void> {
+async function promptPostInitAction(projectDir: string, config: CollectedConfig): Promise<void> {
+  if (config.postInitAction) {
+    if (config.postInitAction === 'setup-server') {
+      await runSetupServer(projectDir);
+    } else if (config.postInitAction === 'patch-server') {
+      await runPatchServer(projectDir, config);
+    }
+    return;
+  }
+
+  const inquirer = require('inquirer');
+  const { action } = await inquirer.prompt([{
+    type: 'list',
+    name: 'action',
+    message: '配置生成完成，下一步执行什么?',
+    choices: [
+      { name: '暂不执行，只生成配置文件', value: 'none' },
+      { name: '初始化服务器 / 部署前准备（setup-server，包含安全补丁）', value: 'setup-server' },
+      { name: '只给已部署服务器打安全补丁（patch-server）', value: 'patch-server' },
+    ],
+    default: 'none',
+  }]);
+
+  if (action === 'setup-server') {
+    await runSetupServer(projectDir);
+  } else if (action === 'patch-server') {
+    await runPatchServer(projectDir, config);
+  }
+}
+
+async function runSetupServer(projectDir: string, keyPath?: string, sshPort?: number | string): Promise<void> {
   const config = loadCache(projectDir);
   const scriptPath = path.join(projectDir, 'server-init.sh');
 
@@ -363,13 +402,20 @@ async function runSetupServer(projectDir: string): Promise<void> {
     throw new Error('server-init.sh 不存在，请先运行 deploy-setup init');
   }
 
-  const { host, user, sshKeyPath } = config.server;
-  const { execSync } = require('child_process');
   const os = require('os');
-  const resolvedKeyPath = (sshKeyPath || '~/.ssh/id_rsa').replace(/^~/, os.homedir());
+  const server = {
+    ...config.server,
+    sshKeyPath: keyPath || config.server.sshKeyPath,
+    sshPort: sshPort ? normalizeSshPort(sshPort) : normalizeSshPort(config.server.sshPort),
+  };
+  const { host, user } = server;
+  const resolvedKeyPath = resolveSshKeyPath(server.sshKeyPath);
 
-  console.log(chalk.cyan(`\n🖥  连接服务器: ${user}@${host}\n`));
+  console.log(chalk.cyan(`\n🖥  连接服务器: ${user}@${host}:${server.sshPort}\n`));
   console.log(chalk.gray(`  使用密钥: ${resolvedKeyPath}`));
+  if (server.sudoMode === 'tty') {
+    console.log(chalk.gray('  sudo 模式: SSH 远程终端输入密码（不保存）'));
+  }
 
   // Acquire a server-side atomic lock so two concurrent `deploy-setup`
   // invocations (from parallel agents or different machines) can't race
@@ -381,24 +427,30 @@ async function runSetupServer(projectDir: string): Promise<void> {
     host,
     user,
     sshKeyPath: resolvedKeyPath,
+    sshPort: server.sshPort,
     projectName: config.project.name || 'default',
     holderHint: lockHolder,
     staleSeconds: 1800,
   });
   console.log(chalk.gray(`  🔒 已获取服务器部署锁 (/tmp/deploy-setup-lock-${config.project.name || 'default'})`));
 
-  const keyArg = fs.existsSync(resolvedKeyPath) ? `-i "${resolvedKeyPath}"` : '';
-  // Convert CRLF to LF for Linux compatibility and write to ASCII temp path to avoid cmd.exe issues with non-ASCII paths
+  // Convert CRLF to LF for Linux compatibility.
   const scriptContent = fs.readFileSync(scriptPath, 'utf-8').replace(/\r\n/g, '\n');
-  const lfScriptPath = path.join(os.tmpdir(), `server-init-${Date.now()}.sh`);
-  fs.writeFileSync(lfScriptPath, scriptContent, 'utf-8');
 
   try {
-    const lfSshCmd = `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${keyArg} ${user}@${host} "bash -s" < "${lfScriptPath}"`;
-    execSync(lfSshCmd, { cwd: projectDir, stdio: 'inherit', timeout: 600000 });
+    runRemoteScript({
+      host,
+      user,
+      sshKeyPath: resolvedKeyPath,
+      sshPort: server.sshPort,
+      script: scriptContent,
+      cwd: projectDir,
+      timeoutMs: 600000,
+      tty: server.sudoMode === 'tty',
+      label: 'server-init',
+    });
     console.log(chalk.green('  ✔ 服务器初始化完成'));
   } finally {
-    if (fs.existsSync(lfScriptPath)) fs.unlinkSync(lfScriptPath);
     try {
       lock.release();
       console.log(chalk.gray('  🔓 已释放服务器部署锁'));
@@ -408,15 +460,30 @@ async function runSetupServer(projectDir: string): Promise<void> {
   }
 }
 
-async function runPatchServer(projectDir: string, config: CollectedConfig, keyPath?: string, dryRun?: boolean): Promise<void> {
-  console.log(chalk.cyan(`\n🩹 应用服务器安全补丁: ${config.server.user}@${config.server.host}\n`));
-  patchServer({ config, projectDir, keyPath, dryRun });
+async function runPatchServer(
+  projectDir: string,
+  config: CollectedConfig,
+  keyPath?: string,
+  sshPort?: number | string,
+  dryRun?: boolean,
+): Promise<void> {
+  const port = sshPort ? normalizeSshPort(sshPort) : normalizeSshPort(config.server.sshPort);
+  console.log(chalk.cyan(`\n🩹 应用服务器安全补丁: ${config.server.user}@${config.server.host}:${port}\n`));
+  if (config.server.sudoMode === 'tty') {
+    console.log(chalk.gray('  sudo 模式: SSH 远程终端输入密码（不保存）'));
+  }
+  patchServer({ config, projectDir, keyPath, sshPort: port, dryRun });
   if (!dryRun) {
     console.log(chalk.green('\n✅ 服务器补丁完成'));
   }
 }
 
-async function runSetupSecrets(projectDir: string, keyPath?: string, envFilePath?: string): Promise<void> {
+async function runSetupSecrets(
+  projectDir: string,
+  keyPath?: string,
+  envFilePath?: string,
+  sshPort?: number | string,
+): Promise<void> {
   const config = loadCache(projectDir);
   const { execSync } = require('child_process');
 
@@ -477,6 +544,7 @@ async function runSetupSecrets(projectDir: string, keyPath?: string, envFilePath
   const secrets: Record<string, string> = {
     SERVER_HOST: config.server.host,
     SERVER_USER: config.server.user,
+    SERVER_PORT: String(sshPort ? normalizeSshPort(sshPort) : normalizeSshPort(config.server.sshPort)),
   };
 
   // Resolve SSH private key
@@ -485,12 +553,12 @@ async function runSetupSecrets(projectDir: string, keyPath?: string, envFilePath
     const inquirer = require('inquirer');
     const answer = await inquirer.prompt([{
       type: 'input', name: 'keyPath',
-      message: 'SSH 私钥文件路径:', default: '~/.ssh/id_rsa',
+      message: 'SSH 私钥文件路径:', default: '~/.ssh/id_ed25519',
     }]);
     resolvedKeyPath = answer.keyPath;
   }
 
-  const fullKeyPath = resolvedKeyPath.replace(/^~/, require('os').homedir());
+  const fullKeyPath = resolveSshKeyPath(resolvedKeyPath);
   if (fs.existsSync(fullKeyPath)) {
     secrets['SSH_PRIVATE_KEY'] = fs.readFileSync(fullKeyPath, 'utf-8');
   } else {
@@ -518,7 +586,7 @@ async function runSetupSecrets(projectDir: string, keyPath?: string, envFilePath
   }
 
   // Business secrets from .env (config.secrets)
-  const infraKeys = new Set(['SERVER_HOST', 'SERVER_USER', 'SSH_PRIVATE_KEY']);
+  const infraKeys = new Set(['SERVER_HOST', 'SERVER_USER', 'SERVER_PORT', 'SSH_PRIVATE_KEY']);
   const businessKeys = (config.secrets || []).filter((k: string) => !infraKeys.has(k));
 
   if (businessKeys.length > 0) {

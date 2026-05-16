@@ -15,12 +15,13 @@
  * longer than 30min should pass a larger staleSeconds.
  */
 import { execSync } from 'child_process';
-import * as fs from 'fs';
+import { buildSshCommand } from './ssh-runner';
 
 export interface ServerLockOptions {
   host: string;
   user: string;
   sshKeyPath: string;
+  sshPort?: number;
   projectName: string;
   holderHint: string;
   staleSeconds?: number;
@@ -34,11 +35,15 @@ function sshExec(
   host: string,
   user: string,
   keyPath: string,
+  sshPort: number | undefined,
   script: string,
   timeoutMs = 30000,
 ): { stdout: string; code: number } {
-  const keyArg = fs.existsSync(keyPath) ? `-i "${keyPath}"` : '';
-  const cmd = `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${keyArg} ${user}@${host} bash -s`;
+  const cmd = buildSshCommand(
+    { host, user, sshKeyPath: keyPath, sshPort },
+    'bash -s',
+    { connectTimeout: 15 },
+  );
   try {
     const stdout = execSync(cmd, {
       input: script,
@@ -61,7 +66,7 @@ function sshExec(
  * be called in finally blocks.
  */
 export function acquireServerLock(opts: ServerLockOptions): ServerLockHandle {
-  const { host, user, sshKeyPath, projectName, holderHint } = opts;
+  const { host, user, sshKeyPath, sshPort, projectName, holderHint } = opts;
   const staleSeconds = opts.staleSeconds ?? 1800;
   const lockDir = `/tmp/deploy-setup-lock-${projectName}`;
   const now = new Date().toISOString();
@@ -98,13 +103,13 @@ echo "HELD:$OWNER_LINE:$STAMP_LINE:\${AGE}s"
 exit 3
 `;
 
-  const result = sshExec(host, user, sshKeyPath, acquireScript);
+  const result = sshExec(host, user, sshKeyPath, sshPort, acquireScript);
   const firstLine = result.stdout.trim().split('\n').pop() || '';
 
   if (firstLine === 'ACQUIRED') {
     return {
       release: () => {
-        sshExec(host, user, sshKeyPath, `rm -rf "${lockDir}"`);
+        sshExec(host, user, sshKeyPath, sshPort, `rm -rf "${lockDir}"`);
       },
     };
   }
@@ -134,7 +139,7 @@ exit 3
  * Force-release a lock. Use only when user has confirmed the holder is dead.
  */
 export function forceReleaseServerLock(opts: Omit<ServerLockOptions, 'holderHint'>): void {
-  const { host, user, sshKeyPath, projectName } = opts;
+  const { host, user, sshKeyPath, sshPort, projectName } = opts;
   const lockDir = `/tmp/deploy-setup-lock-${projectName}`;
-  sshExec(host, user, sshKeyPath, `rm -rf "${lockDir}"`);
+  sshExec(host, user, sshKeyPath, sshPort, `rm -rf "${lockDir}"`);
 }

@@ -32,7 +32,7 @@ echo "Using ${RUNTIME} with ${IMAGE}"
   "${IMAGE}" \
   bash -lc 'set -euo pipefail
 mkdir -p /tmp/stubs /etc/apt/apt.conf.d /etc/modprobe.d
-for cmd in apt-get systemctl update-initramfs rmmod nginx; do
+for cmd in apt-get systemctl update-initramfs rmmod nginx sudo; do
   printf "#!/bin/sh\necho stub-%s \"\$@\"\nexit 0\n" "$cmd" > "/tmp/stubs/$cmd"
   chmod +x "/tmp/stubs/$cmd"
 done

@@ -26,6 +26,8 @@ node dist/cli.js detect --json -d /path/to/project
 node dist/cli.js init -d /path/to/project
 ```
 
+`init` 会在服务器配置阶段依次询问服务器地址、SSH 用户、SSH 端口和私钥路径。私钥路径会优先列出常见文件：`~/.ssh/id_ed25519`、`~/.ssh/id_rsa`、`~/.ssh/id_ecdsa`、`~/.ssh/id_ed25519_sk`、`~/.ssh/id_ecdsa_sk`，最后提供手动输入其他路径。随后会先选择下一步操作：暂不执行、初始化服务器，或只对已部署服务器运行 `patch-server` 安全补丁；只有初始化服务器/部署前准备路径会继续询问部署目录。
+
 使用配置文件初始化：
 
 ```bash
@@ -86,13 +88,15 @@ node dist/cli.js check-dns -d .
 
 # SSH 到服务器执行 server-init.sh
 node dist/cli.js setup-server -d .
+node dist/cli.js setup-server -d . --port 2222 --key ~/.ssh/id_ed25519
 
 # 对已部署完成的服务器单独应用安全补丁，不重新初始化或部署
 node dist/cli.js patch-server -d .
+node dist/cli.js patch-server -d . --port 2222 --key ~/.ssh/id_ed25519
 node dist/cli.js patch-server -d . --dry-run
 
 # 配置 GitHub Secrets
-node dist/cli.js setup-secrets -d . --key ~/.ssh/id_rsa --env-file .env
+node dist/cli.js setup-secrets -d . --key ~/.ssh/id_ed25519 --port 2222 --env-file .env
 
 # 同步新增或删除的 .env 变量
 node dist/cli.js sync-env -d . --dry-run
@@ -125,8 +129,10 @@ node dist/cli.js redeploy -c .deploy/config.json
   },
   "server": {
     "host": "203.0.113.10",
-    "user": "root",
-    "sshKeyPath": "~/.ssh/id_rsa",
+    "user": "deploy",
+    "sshKeyPath": "~/.ssh/id_ed25519",
+    "sshPort": 22,
+    "sudoMode": "tty",
     "deployDir": "/opt/apps"
   },
   "domain": {
@@ -142,6 +148,7 @@ node dist/cli.js redeploy -c .deploy/config.json
     "production": "main",
     "staging": null
   },
+  "postInitAction": "setup-server",
   "database": {
     "type": "none",
     "location": "none",
@@ -174,7 +181,7 @@ node dist/cli.js redeploy -c .deploy/config.json
 需要准备：
 
 - 项目仓库：`GH_RELEASE_REPO_TOKEN`，用于触发 proxy repo 的 `repository_dispatch`。
-- Proxy repo：`SERVER_HOST`、`SERVER_USER`、`SSH_PRIVATE_KEY` 和业务 Secrets。
+- Proxy repo：`SERVER_HOST`、`SERVER_USER`、`SERVER_PORT`、`SSH_PRIVATE_KEY` 和业务 Secrets。
 
 如果想把完整部署 workflow 直接生成到当前仓库，使用 legacy 模式：
 
@@ -193,6 +200,8 @@ node dist/cli.js patch-server -d .
 node dist/cli.js patch-server -d . -c .deploy/config.json
 node dist/cli.js patch-server -d . --dry-run
 ```
+
+如果 SSH 用户不是 `root`，`init` 可以选择 `sudoMode: "tty"`。此模式会用 `ssh -tt` 打开远程终端，`sudo` 密码只通过 SSH 加密通道输入到远程服务器，不写入 `.deploy/config.json`、缓存文件或 GitHub Secrets。CI/CD 的非交互部署仍建议使用 root、免密 sudo，或让部署用户加入 docker 组。
 
 补丁脚本会执行：
 

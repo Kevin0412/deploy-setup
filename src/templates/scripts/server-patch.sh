@@ -33,38 +33,55 @@ warn() {
     echo -e "${RED}  ⚠ $1${NC}"
 }
 
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+write_root_file() {
+    local target="$1"
+    if [ "$(id -u)" -eq 0 ]; then
+        cat > "$target"
+    else
+        sudo tee "$target" >/dev/null
+    fi
+}
+
 run_apt_security_updates() {
     if ! command -v apt-get &> /dev/null; then
         echo "  非 apt 系统，跳过自动安全升级"
         return
     fi
 
-    export DEBIAN_FRONTEND=noninteractive
-    export NEEDRESTART_MODE=a
     APT_OPTS="-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
-    apt-get update
-    apt-get install ${APT_OPTS} unattended-upgrades kmod
-    apt-get upgrade ${APT_OPTS}
+    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install ${APT_OPTS} unattended-upgrades kmod
+    as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get upgrade ${APT_OPTS}
 
-    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'APTCONF'
+    as_root mkdir -p /etc/apt/apt.conf.d
+    write_root_file /etc/apt/apt.conf.d/20auto-upgrades <<'APTCONF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APTCONF
 
     if command -v nginx &> /dev/null; then
         nginx -v 2>&1 | sed 's/^/  /'
-        systemctl try-restart nginx 2>/dev/null || true
+        as_root systemctl try-restart nginx 2>/dev/null || true
     fi
 }
 
 apply_kernel_lpe_mitigations() {
-    if [ ! -d /etc/modprobe.d ] || [ ! -r /proc/modules ]; then
+    if [ ! -r /proc/modules ]; then
         echo "  当前系统不支持 modprobe 缓解检查，跳过"
         return
     fi
 
-    cat > /etc/modprobe.d/deploy-setup-local-lpe.conf <<'MODPROBE'
+    as_root mkdir -p /etc/modprobe.d
+    write_root_file /etc/modprobe.d/deploy-setup-local-lpe.conf <<'MODPROBE'
 # deploy-setup automatic mitigation for recent Linux kernel local privilege escalation classes.
 # Copy Fail / CVE-2026-31431: block algif_aead.
 # Dirty Frag / Fragnesia: block esp4, esp6, and rxrpc.
@@ -74,8 +91,8 @@ install esp6 /bin/false
 install rxrpc /bin/false
 MODPROBE
 
-    update-initramfs -u -k all 2>/dev/null || true
-    rmmod algif_aead esp4 esp6 rxrpc 2>/dev/null || true
+    as_root update-initramfs -u -k all 2>/dev/null || true
+    as_root rmmod algif_aead esp4 esp6 rxrpc 2>/dev/null || true
 
     if grep -qE '^(algif_aead|esp4|esp6|rxrpc) ' /proc/modules; then
         warn "部分 LPE 缓解模块仍在使用中，需重启服务器后完全生效"

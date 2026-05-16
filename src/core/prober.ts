@@ -1,7 +1,6 @@
 import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
 import { ServerConfig, ProbeResult } from './types';
+import { buildSshCommand } from '../utils/ssh-runner';
 
 /**
  * Check if GitHub API is reachable from the local machine.
@@ -24,10 +23,6 @@ export function probeGitHubApi(): boolean {
  * Returns a ProbeResult describing hardware, software, and network conditions.
  */
 export function probeServer(server: ServerConfig): ProbeResult {
-  const resolvedKeyPath = (server.sshKeyPath || '~/.ssh/id_rsa').replace(/^~/, os.homedir());
-  const keyArg = fs.existsSync(resolvedKeyPath) ? `-i "${resolvedKeyPath}"` : '';
-  const sshBase = `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${keyArg} ${server.user}@${server.host}`;
-
   const script = `
     echo "===MEMORY==="
     free -m 2>/dev/null | awk '/Mem:/{print $2}' || echo "0"
@@ -52,16 +47,14 @@ export function probeServer(server: ServerConfig): ProbeResult {
   `.trim();
 
   let output: string;
-  const tmpScript = require('path').join(os.tmpdir(), `deploy_probe_${Date.now()}.sh`);
   try {
-    fs.writeFileSync(tmpScript, script, 'utf-8');
-    output = execSync(`${sshBase} "bash -s" < "${tmpScript}"`, {
+    output = execSync(buildSshCommand(server, 'bash -s', { connectTimeout: 15 }), {
+      input: script,
       encoding: 'utf-8',
       timeout: 60000,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
-    if (fs.existsSync(tmpScript)) fs.unlinkSync(tmpScript);
   } catch (err: any) {
-    if (fs.existsSync(tmpScript)) fs.unlinkSync(tmpScript);
     // If SSH fails, return conservative defaults
     console.warn(`Server probe failed: ${err.message}. Using conservative defaults.`);
     return {

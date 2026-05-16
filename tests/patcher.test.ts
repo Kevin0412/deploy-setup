@@ -73,6 +73,8 @@ describe('server patching', () => {
     expect(script).toContain('PATCH_TARGET="demo-app"')
     expect(script).toContain('deploy-setup 服务器补丁: ${PATCH_TARGET}')
     expect(script).toContain('apt-get upgrade ${APT_OPTS}')
+    expect(script).toContain('as_root env DEBIAN_FRONTEND=noninteractive')
+    expect(script).toContain('sudo tee "$target" >/dev/null')
     expect(script).toContain('install algif_aead /bin/false')
     expect(script).toContain('install rxrpc /bin/false')
     expect(script).not.toContain('{{PATCH_TARGET}}')
@@ -89,7 +91,7 @@ describe('server patching', () => {
     patchServer({ config: baseConfig(), projectDir: tmpDir })
 
     expect(childProcess.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30'),
+      expect.stringContaining('ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -p 22'),
       expect.objectContaining({
         cwd: tmpDir,
         input: expect.stringContaining('PATCH_TARGET="demo-app"'),
@@ -97,9 +99,27 @@ describe('server patching', () => {
       }),
     )
     expect(childProcess.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('root@203.0.113.10 "bash -s"'),
+      expect.stringContaining("'root@203.0.113.10' 'bash -s'"),
       expect.anything(),
     )
+  })
+
+  it('uses an SSH TTY for sudo-capable patching without storing a password', () => {
+    const config = baseConfig()
+    config.server.user = 'deploy'
+    config.server.sshKeyPath = path.join(tmpDir, 'missing-key')
+    config.server.sshPort = 2202
+    config.server.sudoMode = 'tty'
+
+    patchServer({ config, projectDir: tmpDir })
+
+    const calls = vi.mocked(childProcess.execSync).mock.calls
+    expect(calls[0][0]).toEqual(expect.stringContaining('scp '))
+    expect(calls[0][0]).toEqual(expect.stringContaining('-P 2202'))
+    expect(calls[1][0]).toEqual(expect.stringContaining('ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -p 2202 -tt'))
+    expect(calls[1][0]).toEqual(expect.stringContaining("'deploy@203.0.113.10'"))
+    expect(calls[1][1]).toEqual(expect.objectContaining({ stdio: 'inherit' }))
+    expect(JSON.stringify(config.server)).not.toMatch(/password/i)
   })
 
   it('loads .deploy/config.json before falling back to the cache', () => {
