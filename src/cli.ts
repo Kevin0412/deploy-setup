@@ -10,13 +10,14 @@ import { generateFiles } from './core/generator';
 import { probeServer } from './core/prober';
 import { selectStrategy } from './core/strategy';
 import { saveProjectRecord } from './utils/config-store';
-import { saveCache, loadCache, saveDeployConfig } from './utils/cache';
+import { saveCache, loadCache, loadDeployConfig, saveDeployConfig } from './utils/cache';
 import { CollectedConfig, EXIT_CONFIG_ERROR, EXIT_NETWORK_ERROR, EXIT_PROXY_REPO_FAILED } from './core/types';
 import { diffEnvKeys, patchDeployYml } from './core/env-sync';
 import { acquireServerLock } from './utils/deploy-lock';
 import { redeployProject } from './core/redeployer';
 import { deriveProxyRepoConfig } from './core/strategy';
 import { redirectConsoleToStderr, emitJsonSuccess, emitJsonError } from './utils/json-output';
+import { patchServer } from './core/patcher';
 
 const packageJson = require('../package.json');
 const program = new Command();
@@ -115,6 +116,21 @@ program
   .option('-d, --dir <dir>', '项目目录', process.cwd())
   .action(async (options) => {
     await runSetupServer(path.resolve(options.dir));
+  });
+
+// ─── patch-server ───
+program
+  .command('patch-server')
+  .alias('patch')
+  .description('对已部署服务器应用安全补丁（不重新初始化或部署）')
+  .option('-d, --dir <dir>', '项目目录', process.cwd())
+  .option('-c, --config <path>', 'deploy config 路径（默认 .deploy/config.json，回退 .deploy-setup-cache.json）')
+  .option('-k, --key <path>', 'SSH 私钥文件路径')
+  .option('--dry-run', '仅输出将执行的补丁脚本，不连接服务器', false)
+  .action(async (options) => {
+    const projectDir = path.resolve(options.dir);
+    const config = loadDeployConfig(projectDir, options.config);
+    await runPatchServer(projectDir, config, options.key, options.dryRun);
   });
 
 // ─── setup-secrets ───
@@ -389,6 +405,14 @@ async function runSetupServer(projectDir: string): Promise<void> {
     } catch (err: any) {
       console.log(chalk.yellow(`  ⚠ 释放锁失败（仍会继续）: ${err.message}`));
     }
+  }
+}
+
+async function runPatchServer(projectDir: string, config: CollectedConfig, keyPath?: string, dryRun?: boolean): Promise<void> {
+  console.log(chalk.cyan(`\n🩹 应用服务器安全补丁: ${config.server.user}@${config.server.host}\n`));
+  patchServer({ config, projectDir, keyPath, dryRun });
+  if (!dryRun) {
+    console.log(chalk.green('\n✅ 服务器补丁完成'));
   }
 }
 

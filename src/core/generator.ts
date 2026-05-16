@@ -174,6 +174,9 @@ function generateProxyWorkflows(config: CollectedConfig, vars: Record<string, st
 function buildTemplateVars(config: CollectedConfig, skipDockerFiles: boolean = false): Record<string, string> {
   const startParts = config.project.startCmd.split(/\s+/);
   const dockerCmd = startParts.map(p => `"${p}"`).join(', ');
+  const serverSecurityPatchScript = replacePlaceholders(readTemplate('scripts', 'server-patch.sh'), {
+    PATCH_TARGET: config.project.name || 'server',
+  }).replace(/\r\n/g, '\n');
 
   // ENV_HARDCODED_LINES: non-sensitive vars written directly into .env
   const envHardcodedLines = Object.entries(config.envVars || {})
@@ -217,6 +220,7 @@ function buildTemplateVars(config: CollectedConfig, skipDockerFiles: boolean = f
     ENV_HARDCODED_LINES: envHardcodedLines,
     ENV_SECRET_LINES: envSecretLines,
     ENV_SECRET_PLACEHOLDER_LINES: envSecretPlaceholderLines,
+    SERVER_SECURITY_PATCH_SCRIPT: serverSecurityPatchScript,
     DEPLOYMENT_MODE: config.deploymentMode || 'generated',
     PROXY_MODE: config.proxyMode || 'host-nginx',
     SKIP_BUILD: skipDockerFiles ? 'true' : '',

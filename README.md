@@ -72,6 +72,10 @@ node dist/cli.js check-dns -d .
 # SSH 到服务器执行 server-init.sh
 node dist/cli.js setup-server -d .
 
+# 对已部署完成的服务器单独应用安全补丁，不重新初始化或部署
+node dist/cli.js patch-server -d .
+node dist/cli.js patch-server -d . --dry-run
+
 # 配置 GitHub Secrets
 node dist/cli.js setup-secrets -d . --key ~/.ssh/id_rsa --env-file .env
 
@@ -165,7 +169,17 @@ node dist/cli.js init -d . -c .deploy/config.json --legacy
 
 ## 安全更新
 
-`setup-server` 和 `all` 都会运行生成的 `server-init.sh`。脚本开头会做一轮幂等安全处理：
+`setup-server` 和 `all` 都会运行生成的 `server-init.sh`。脚本开头会做一轮幂等安全处理。
+
+已经部署完成的服务器可以单独运行补丁命令，不会重跑 Docker、端口、Nginx 站点或 HTTPS 初始化：
+
+```bash
+node dist/cli.js patch-server -d .
+node dist/cli.js patch-server -d . -c .deploy/config.json
+node dist/cli.js patch-server -d . --dry-run
+```
+
+补丁脚本会执行：
 
 - 对 Debian/Ubuntu 服务器执行 `apt-get update`、安装 `unattended-upgrades`、执行非交互式 `apt-get upgrade`。
 - 如果宿主机已安装 Nginx，会在升级后尝试重启 Nginx，让修复后的包生效。
@@ -184,6 +198,7 @@ src/cli.ts                 CLI 命令入口
 src/core/detector.ts       项目类型、环境变量、场景检测
 src/core/collector.ts      交互式配置收集
 src/core/generator.ts      模板渲染与文件写入
+src/core/patcher.ts        已部署服务器安全补丁
 src/core/strategy.ts       部署策略与 proxy repo 配置
 src/core/prober.ts         服务器能力探测
 src/core/env-sync.ts       .env 差异和 workflow patch
