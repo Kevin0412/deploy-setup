@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify": "npm run build && npm test && node dist/cli.js --version && node dist/cli.js detect --json -d .",
+    "verify:container": "npm run build && bash scripts/verify-container.sh",
     "dev": "tsc --watch",
     "start": "node dist/cli.js"
   },

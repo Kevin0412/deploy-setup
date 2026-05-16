@@ -57,6 +57,21 @@ npm run verify
 
 当前测试覆盖场景识别、proxy workflow 模板、JSON 输出、重新部署命令、legacy workflow 生成和 `.deploy/config.json` 写入。
 
+有 Podman 或 Docker 权限的机器还可以跑容器级验证。该命令不使用 `sudo`，默认优先使用 Podman，缺失时回退到 Docker：
+
+```bash
+npm run verify:container
+```
+
+容器验证会启动 Ubuntu 容器，执行渲染后的 `server-patch.sh`。为了避免真实修改容器系统包，`apt-get`、`systemctl`、`rmmod` 等破坏性命令会被 stub，但会检查补丁脚本流程、自动更新配置和本地提权模块屏蔽文件是否真实写入。
+
+可以通过环境变量指定运行时或镜像：
+
+```bash
+CONTAINER_RUNTIME=podman npm run verify:container
+VERIFY_CONTAINER_IMAGE=docker.io/library/ubuntu:24.04 npm run verify:container
+```
+
 ## 常用命令
 
 ```bash
