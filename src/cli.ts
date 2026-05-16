@@ -276,6 +276,13 @@ async function runInit(projectDir: string, configFile?: string, initOptions?: In
     config = await collectConfig(detection, projectName);
   }
 
+  if (config.postInitAction === 'patch-server') {
+    console.log(chalk.cyan('\n📦 保存补丁配置...\n'));
+    saveCache(projectDir, config);
+    saveDeployConfig(projectDir, config);
+    return config;
+  }
+
   // Derive proxy repo config (default: enabled, unless --legacy)
   const { execSync: execSyncLocal } = require('child_process');
   let repoOwner = '';

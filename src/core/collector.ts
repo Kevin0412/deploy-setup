@@ -143,8 +143,12 @@ export async function collectConfig(detection: DetectionResult, projectName: str
   // 先收集服务器信息，以便扫描端口
   const { server, postInitAction } = await collectServerConfig();
 
+  if (postInitAction === 'patch-server') {
+    return await reviewLoop(createPatchOnlyConfig(server, projectName, detection), detection);
+  }
+
   // SSH 扫描服务器已占端口
-  const occupiedPorts = postInitAction === 'patch-server' ? [] : await scanRemotePorts(server);
+  const occupiedPorts = await scanRemotePorts(server);
   const occupiedSet = new Set(occupiedPorts);
 
   const project = await collectProjectConfig(detection, projectName, occupiedSet);
@@ -180,6 +184,49 @@ export async function collectConfig(detection: DetectionResult, projectName: str
   };
 
   return await reviewLoop(config, detection);
+}
+
+function createPatchOnlyConfig(
+  server: ServerConfig,
+  projectName: string,
+  detection: DetectionResult,
+): CollectedConfig {
+  return {
+    project: {
+      name: projectName,
+      type: 'proxy-service',
+      language: detection.language || 'node',
+      port: detection.port || 0,
+      buildCmd: '',
+      startCmd: '',
+      projectStructure: detection.projectStructure || 'standard',
+      subDirs: detection.subDirs || {},
+    },
+    server,
+    domain: {
+      enabled: false,
+      name: '',
+      https: false,
+    },
+    secrets: [],
+    envVars: {},
+    branches: {
+      production: 'main',
+      staging: null,
+    },
+    postInitAction: 'patch-server',
+    deploymentMode: 'generated',
+    proxyMode: 'none',
+    database: {
+      type: 'none',
+      location: 'none',
+      dataDir: '',
+      initCmd: '',
+      migrateCmd: '',
+      createAdmin: false,
+      adminCmd: '',
+    },
+  };
 }
 
 async function collectProjectConfig(detection: DetectionResult, projectName: string, occupiedPorts: Set<number> = new Set()) {
@@ -336,7 +383,7 @@ async function collectServerConfig(): Promise<{ server: ServerConfig; postInitAc
       server.sshKeyPath = await promptSshKeyPath(server.sshKeyPath);
       server.sudoMode = await promptSudoMode(server.user, server.sudoMode);
       const postInitAction = await promptPostInitActionChoice();
-      if (postInitAction === 'patch-server') {
+      if (postInitAction !== 'setup-server') {
         server.deployDir = server.deployDir || '/opt/apps';
       } else {
         const { deployDir } = await inquirer.prompt([{
@@ -384,7 +431,7 @@ async function collectServerConfig(): Promise<{ server: ServerConfig; postInitAc
   const sudoMode = await promptSudoMode(identity.user);
   const postInitAction = await promptPostInitActionChoice();
 
-  const rest = postInitAction === 'patch-server'
+  const rest = postInitAction !== 'setup-server'
     ? { deployDir: '/opt/apps' }
     : await inquirer.prompt([
       {
@@ -561,8 +608,12 @@ async function collectBranchConfig() {
 async function reviewLoop(config: CollectedConfig, detection: DetectionResult): Promise<CollectedConfig> {
   while (true) {
     console.log(chalk.cyan('\n━━━ 配置摘要 ━━━'));
-    console.log(`  项目: ${config.project.name} (${config.project.type})`);
-    console.log(`  端口: ${config.project.port}`);
+    if (config.postInitAction === 'patch-server') {
+      console.log('  目标: 已部署服务器安全补丁');
+    } else {
+      console.log(`  项目: ${config.project.name} (${config.project.type})`);
+      console.log(`  端口: ${config.project.port}`);
+    }
     console.log(`  服务器: ${config.server.user}@${config.server.host}:${config.server.sshPort || 22}`);
     if (config.server.sudoMode === 'tty') {
       console.log('  sudo: SSH 远程终端输入密码（不保存）');

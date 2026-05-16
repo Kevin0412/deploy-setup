@@ -28,6 +28,8 @@ node dist/cli.js init -d /path/to/project
 
 `init` 会在服务器配置阶段依次询问服务器地址、SSH 用户、SSH 端口和私钥路径。私钥路径会优先列出常见文件：`~/.ssh/id_ed25519`、`~/.ssh/id_rsa`、`~/.ssh/id_ecdsa`、`~/.ssh/id_ed25519_sk`、`~/.ssh/id_ecdsa_sk`，最后提供手动输入其他路径。随后会先选择下一步操作：暂不执行、初始化服务器，或只对已部署服务器运行 `patch-server` 安全补丁；只有初始化服务器/部署前准备路径会继续询问部署目录。
 
+如果选择“已部署服务器：只打安全补丁”，`init` 会走补丁短路径，不再询问项目类型、域名、Secrets、部署分支或部署目录，也不会生成 Docker/Workflow 文件。
+
 使用配置文件初始化：
 
 ```bash
