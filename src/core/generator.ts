@@ -155,7 +155,30 @@ export function generateFiles(config: CollectedConfig, outputDir: string): Gener
     console.log(chalk.green(`  生成: .gitattributes`));
   }
 
+  // Ensure user .gitignore excludes deploy-setup private state.
+  // These files contain the server host/user/SSH key path; committing them
+  // defeats the whole point of writing .deploy/config.json as 0o600.
+  ensureGitignoreEntries(outputDir, ['.deploy/', '.deploy-setup-cache.json']);
+
   return generated;
+}
+
+function ensureGitignoreEntries(outputDir: string, requiredEntries: string[]): void {
+  const gitignorePath = path.join(outputDir, '.gitignore');
+  const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf-8') : '';
+  const existingLines = new Set(existing.split(/\r?\n/).map(l => l.trim()).filter(Boolean));
+  const missing = requiredEntries.filter(entry => !existingLines.has(entry));
+  if (missing.length === 0) return;
+
+  if (existing.length === 0) {
+    fs.writeFileSync(gitignorePath, missing.join('\n') + '\n', 'utf-8');
+    console.log(chalk.green(`  生成: .gitignore (${missing.join(', ')})`));
+    return;
+  }
+
+  const prefix = existing.endsWith('\n') ? '' : '\n';
+  fs.appendFileSync(gitignorePath, `${prefix}${missing.join('\n')}\n`, 'utf-8');
+  console.log(chalk.green(`  追加: .gitignore (${missing.join(', ')})`));
 }
 
 /**

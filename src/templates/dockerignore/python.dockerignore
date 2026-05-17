@@ -14,3 +14,4 @@ build/
 .mypy_cache/
 node_modules/
 .deploy-setup-cache.json
+.deploy/

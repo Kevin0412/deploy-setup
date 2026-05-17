@@ -137,6 +137,38 @@ describe('generated deployment output', () => {
     expect(dockerfile).not.toContain('FROM nginx:alpine')
   })
 
+  it('keeps .deploy/ out of the runtime docker image', () => {
+    generateFiles(baseConfig(), tmpDir)
+
+    const dockerignore = fs.readFileSync(path.join(tmpDir, '.dockerignore'), 'utf-8')
+
+    expect(dockerignore.split(/\r?\n/)).toContain('.deploy/')
+    expect(dockerignore.split(/\r?\n/)).toContain('.deploy-setup-cache.json')
+  })
+
+  it('seeds .gitignore with deploy-setup private state when missing', () => {
+    generateFiles(baseConfig(), tmpDir)
+
+    const gitignorePath = path.join(tmpDir, '.gitignore')
+    expect(fs.existsSync(gitignorePath)).toBe(true)
+    const lines = fs.readFileSync(gitignorePath, 'utf-8').split(/\r?\n/)
+    expect(lines).toContain('.deploy/')
+    expect(lines).toContain('.deploy-setup-cache.json')
+  })
+
+  it('appends only missing entries to an existing .gitignore', () => {
+    const existing = 'node_modules/\n.deploy/\n'
+    fs.writeFileSync(path.join(tmpDir, '.gitignore'), existing, 'utf-8')
+
+    generateFiles(baseConfig(), tmpDir)
+
+    const content = fs.readFileSync(path.join(tmpDir, '.gitignore'), 'utf-8')
+    expect(content).toContain('node_modules/')
+    expect(content).toContain('.deploy/')
+    expect(content).toContain('.deploy-setup-cache.json')
+    expect(content.match(/^\.deploy\/$/gm)?.length).toBe(1)
+  })
+
   it('writes reusable deploy config to .deploy/config.json', () => {
     const config = baseConfig()
 

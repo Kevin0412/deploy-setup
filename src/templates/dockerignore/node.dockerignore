@@ -10,5 +10,6 @@ build/
 .nuxt/
 coverage/
 .deploy-setup-cache.json
+.deploy/
 !prisma/**
 !public/**
